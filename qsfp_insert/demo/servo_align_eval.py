@@ -14,12 +14,11 @@ import pybullet as p
 
 from _paths import ROOT  # noqa: F401
 
+from constants import HOLE_X_RANGE, HOLE_Y_RANGE
+
 _PROJECT_ROOT = os.path.dirname(ROOT)
 
 from servo_align import servo_align_episode  # noqa: E402
-
-HOLE_X_RANGE = (0.5, 0.6)
-HOLE_Y_RANGE = (0.0, 0.1)
 
 
 def _sample_hole_xy(rng: random.Random) -> tuple[float, float]:

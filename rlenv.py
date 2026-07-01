@@ -10,6 +10,7 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 import math
 
+
 class PegInHoleGymEnv(gym.Env):
     def __init__(self, gui=True, verbose=True):
         super().__init__()
@@ -19,6 +20,9 @@ class PegInHoleGymEnv(gym.Env):
 
         if gui:
             p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
+            p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 1)
+            p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 1)
+            p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 1)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0, 0, -9.81)
 
@@ -211,7 +215,7 @@ class PegInHoleGymEnv(gym.Env):
         gray = np.expand_dims(gray, axis=2)
         return {"cam_image": gray}
 
-    def _render_camera_from_link(self, body_id, link_index):
+    def _render_camera_from_link(self, body_id, link_index, with_depth_seg=False):
         # Render image from specified robot link (e.g., camera)
         link_state = p.getLinkState(body_id, link_index, computeForwardKinematics=True)
         link_pos = link_state[0]
@@ -234,16 +238,25 @@ class PegInHoleGymEnv(gym.Env):
             farVal=3.0
         )
 
-        w, h, rgba, _, _ = p.getCameraImage(
-            self.image_width,
-            self.image_height,
+        kwargs = dict(
             viewMatrix=view,
             projectionMatrix=proj,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+        )
+        if with_depth_seg:
+            kwargs["flags"] = p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX
+        w, h, rgba, depth, seg = p.getCameraImage(
+            self.image_width,
+            self.image_height,
+            **kwargs,
         )
 
         rgba_img = np.reshape(rgba, (h, w, 4))
-        return rgba_img
+        if not with_depth_seg:
+            return rgba_img
+        depth_buf = np.reshape(depth, (h, w)).astype(np.float32)
+        seg_buf = np.reshape(seg, (h, w)).astype(np.int32)
+        return rgba_img, depth_buf, seg_buf
 
     def _compute_reward(self):
         # Compute reward based on distance to target

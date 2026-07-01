@@ -5,21 +5,23 @@ QSFP-DD 方孔 + 矩形轴，PyBullet 物理验证（独立于 `rlenv.py`）。
 ## 运行
 
 ```bash
-python qsfp_insert/demo/physics_insert.py --gui   # 仅 peg+孔，测插入物理
-python qsfp_insert/demo/ur5_insert.py --gui       # UR5+桌+孔，IK 下插
-python qsfp_insert/demo/servo_align.py --gui              # 对准孔口（不插入）
-python qsfp_insert/demo/servo_align.py --gui --insert     # 对准后继续下插
-python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42            # 批量对准
-python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 --insert   # 批量对准+插入
+python qsfp_insert/demo/servo_align.py --gui
+python qsfp_insert/demo/servo_align.py --gui --wrist_cam [--opencv_render] [--insert]
+python qsfp_insert/demo/servo_align.py --gui --fixed_cam [--opencv_render] [--insert]
+python qsfp_insert/demo/ur5_insert.py --gui [--wrist_cam] [--fixed_cam] [--opencv_render]
+python qsfp_insert/demo/fixed_camera_demo.py --gui [--seed 42] [--opencv_render]
+python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 [--insert]
 ```
 
-对准容差见 `constants.py`（文献暂定值，非相机假设）。
+参数：`--gui` 仅 3D；`--wrist_cam` / `--fixed_cam` 开对应 GUI 角预览（须 `--gui`）；`--opencv_render` 再开 OpenCV 横排窗（须指定相机）；`--insert` 对准后下插。
+
+对准容差见 `constants.py`。
 
 ## 目录
 
 | 路径 | 说明 |
 |------|------|
-| `demo/` | 脚本；`cartesian_control.py` 为 6D Jacobian 速度伺服 |
-| `constants.py` | 尺寸与对准/插入容差 |
-| `geometry.py` | 判据 |
-| `urdf/` | 孔板、治具基座、轴、UR5 变体 |
+| `demo/` | 可运行入口脚本 |
+| `sim/` | PyBullet 场景、外置相机、笛卡尔伺服 |
+| `constants.py` / `geometry.py` | 尺寸与判据 |
+| `urdf/` | 孔板、治具、轴、UR5、外置相机 |

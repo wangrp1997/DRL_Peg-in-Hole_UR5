@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Peg + hole plate, kinematic insert. Usage: python qsfp_insert/demo/physics_insert.py [--gui]"""
+"""Peg + hole plate, kinematic insert."""
 from __future__ import annotations
 
 import argparse
@@ -10,14 +10,11 @@ import time
 import pybullet as p
 import pybullet_data
 
-from _paths import ROOT, URDF  # noqa: E402
+from _paths import ROOT, URDF  # noqa: F401
 
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-
-from constants import HOLE_XY, INSERTED_TIP_Z, PEG_L, PLATE_TOP_Z  # noqa: E402
-from geometry import is_inserted, peg_tip_world  # noqa: E402
-from ur5_common import load_fixture  # noqa: E402
+from constants import HOLE_XY, INSERTED_TIP_Z, PEG_L, PLATE_TOP_Z
+from geometry import is_inserted, peg_tip_world
+from sim.scene import load_fixture
 
 
 def _urdf(name: str) -> str:

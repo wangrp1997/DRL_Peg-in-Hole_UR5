@@ -13,7 +13,6 @@ env/
 
 # Local run artifacts
 outputs/
-
 # IDE / OS
 .idea/
 .vscode/

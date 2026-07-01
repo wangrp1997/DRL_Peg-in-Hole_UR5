@@ -16,6 +16,8 @@ HOLE_BOTTOM_Z = PLATE_TOP_Z - HOLE_DEPTH
 INSERTED_TIP_Z = HOLE_BOTTOM_Z + 0.003
 
 HOLE_XY = (0.55, 0.0)
+HOLE_X_RANGE = (0.5, 0.6)
+HOLE_Y_RANGE = (0.0, 0.1)
 ROBOT_BASE_Z = 0.62
 REST_POSES = [0, -1.57, 1.57, -1.5, -1.57, 0.0]
 
@@ -39,3 +41,17 @@ ALIGN_Z_NOMINAL = 0.006
 ALIGN_ANG_TOL = 0.026
 
 UR5_MIN_INSERT_DEPTH = 0.022
+
+# Fixed eye-to-hand camera (640×480, Haugaard-style oblique view)
+FIXED_CAM_WIDTH = 640
+FIXED_CAM_HEIGHT = 480
+FIXED_CAM_FOV = 45.0
+FIXED_CAM_NEAR = 0.01
+FIXED_CAM_FAR = 3.0
+# Eye relative to hole mouth: +X oblique, +Y front; look-at always hole centre (see fixed_camera.py).
+FIXED_CAM_EYE_OFFSET = (0.10, 0.06, 0.05)
+FIXED_CAM_UP = (0.0, 0.0, 1.0)
+# Roll around optical axis (+Z in link frame, −Z forward) after look-at; tune sign if image still sideways.
+FIXED_CAM_ROLL_DEG = 90.0
+# fixed_camera_demo: peg tip standoff above hole mouth ( > ALIGN_Z_STANDOFF_MAX, < rest pose ).
+FIXED_CAM_DEMO_STANDOFF = 0.035

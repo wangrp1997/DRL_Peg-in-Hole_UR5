@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UR5 + rect peg + hole, IK insert. Usage: python qsfp_insert/demo/ur5_insert.py [--gui]"""
+"""UR5 + rect peg + hole, IK insert."""
 from __future__ import annotations
 
 import argparse
@@ -9,17 +9,27 @@ import pybullet as p
 
 from _paths import ROOT  # noqa: F401
 
-from constants import EE_LINEAR_STEP, HOLE_DEPTH, PLATE_TOP_Z  # noqa: E402
-from geometry import is_inserted, peg_tip_world  # noqa: E402
-from ur5_common import connect, idle_gui, load_scene, settle, step_tip_z  # noqa: E402
+from constants import EE_LINEAR_STEP, HOLE_DEPTH, PLATE_TOP_Z
+from geometry import is_inserted, peg_tip_world
+from sim.scene import (
+    add_gui_camera_args,
+    close_camera_windows,
+    connect,
+    idle_gui,
+    load_scene,
+    step_tip_z,
+    validate_gui_camera_args,
+)
 
 _UR5_INSERT_DEPTH = 0.022
 
 
-def run(gui: bool) -> bool:
+def run(gui: bool, opencv_render: bool, wrist_cam: bool, fixed_cam: bool) -> bool:
     connect(gui)
-    robot_id, arm, eef, peg, _hole_id, hole_xy = load_scene(gui)
-    ee0, ee_orn0 = p.getLinkState(robot_id, eef)[:2]
+    robot_id, arm, eef, peg, _hole_id, hole_xy = load_scene(
+        gui, opencv_render=opencv_render, wrist_cam=wrist_cam, fixed_cam=fixed_cam
+    )
+    ee_orn0 = p.getLinkState(robot_id, eef)[1]
 
     ok = False
     for _ in range(800):
@@ -36,11 +46,14 @@ def run(gui: bool) -> bool:
     print(f"tip_z={tip[2]:.4f} inserted={ok}")
     if gui:
         idle_gui()
+    close_camera_windows()
     p.disconnect()
     return ok
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gui", action="store_true")
-    sys.exit(0 if run(ap.parse_args().gui) else 1)
+    add_gui_camera_args(ap)
+    args = ap.parse_args()
+    validate_gui_camera_args(ap, args)
+    sys.exit(0 if run(args.gui, args.opencv_render, args.wrist_cam, args.fixed_cam) else 1)

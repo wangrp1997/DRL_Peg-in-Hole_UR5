@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UR5: Cartesian servo to hole mouth; optional insert. Usage: python qsfp_insert/demo/servo_align.py [--gui] [--insert]"""
+"""UR5: Cartesian servo to hole mouth; optional insert."""
 from __future__ import annotations
 
 import argparse
@@ -11,10 +11,19 @@ import pybullet as p
 
 from _paths import ROOT  # noqa: F401
 
-from cartesian_control import alignment_twist, apply_cartesian_velocity, stop_arm  # noqa: E402
-from constants import EE_LINEAR_STEP, HOLE_DEPTH, PLATE_TOP_Z, SERVO_MAX_STEPS, SERVO_STALL_STEPS, UR5_MIN_INSERT_DEPTH  # noqa: E402
-from geometry import alignment_metrics, is_aligned, is_inserted, peg_tip_world  # noqa: E402
-from ur5_common import connect, idle_gui, load_scene, step_tip_z  # noqa: E402
+from constants import EE_LINEAR_STEP, HOLE_DEPTH, PLATE_TOP_Z, SERVO_MAX_STEPS, SERVO_STALL_STEPS, UR5_MIN_INSERT_DEPTH
+from geometry import alignment_metrics, is_aligned, is_inserted, peg_tip_world
+from sim.cartesian_control import alignment_twist, apply_cartesian_velocity, stop_arm
+from sim.scene import (
+    add_gui_camera_args,
+    close_camera_windows,
+    connect,
+    idle_gui,
+    load_scene,
+    refresh_camera_views,
+    step_tip_z,
+    validate_gui_camera_args,
+)
 
 
 def _insert_phase(robot_id, arm, eef, peg, hole_xy, gui: bool) -> bool:
@@ -35,9 +44,14 @@ def servo_align_episode(
     hole_xy: tuple[float, float] | None = None,
     opaque_hole: bool = False,
     insert: bool = False,
+    opencv_render: bool = False,
+    wrist_cam: bool = False,
+    fixed_cam: bool = False,
 ) -> tuple[bool, bool | None, dict, tuple[float, float]]:
     connect(gui)
-    robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(gui, hole_xy=hole_xy)
+    robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(
+        gui, hole_xy=hole_xy, opencv_render=opencv_render, wrist_cam=wrist_cam, fixed_cam=fixed_cam
+    )
     if gui and opaque_hole:
         p.changeVisualShape(hole_id, -1, rgbaColor=[0.55, 0.55, 0.55, 1.0])
     hole_orn = p.getBasePositionAndOrientation(hole_id)[1]
@@ -63,6 +77,7 @@ def servo_align_episode(
         apply_cartesian_velocity(robot_id, peg, arm, twist)
         p.stepSimulation()
         if gui:
+            refresh_camera_views()
             time.sleep(1.0 / 240.0)
 
     stop_arm(robot_id, arm)
@@ -81,8 +96,15 @@ def servo_align_episode(
     return aligned, inserted, m, hole_xy
 
 
-def run(gui: bool, insert: bool) -> bool:
-    aligned, inserted, m, _ = servo_align_episode(gui=gui, opaque_hole=gui, insert=insert)
+def run(gui: bool, insert: bool, opencv_render: bool, wrist_cam: bool, fixed_cam: bool) -> bool:
+    aligned, inserted, m, _ = servo_align_episode(
+        gui=gui,
+        opaque_hole=gui,
+        insert=insert,
+        opencv_render=opencv_render,
+        wrist_cam=wrist_cam,
+        fixed_cam=fixed_cam,
+    )
     print(
         f"dx={m['dx']*1e3:+.2f}mm dy={m['dy']*1e3:+.2f}mm "
         f"standoff={m['standoff']*1e3:.2f}mm "
@@ -95,13 +117,15 @@ def run(gui: bool, insert: bool) -> bool:
         ok = aligned and bool(inserted)
     if gui:
         idle_gui()
+    close_camera_windows()
     p.disconnect()
     return ok
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gui", action="store_true")
+    add_gui_camera_args(ap)
     ap.add_argument("--insert", action="store_true", help="After alignment, continue to insert")
     args = ap.parse_args()
-    sys.exit(0 if run(args.gui, args.insert) else 1)
+    validate_gui_camera_args(ap, args)
+    sys.exit(0 if run(args.gui, args.insert, args.opencv_render, args.wrist_cam, args.fixed_cam) else 1)
