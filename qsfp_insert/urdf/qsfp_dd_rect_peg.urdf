@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- Optional QSFP-DD module approx (rect peg).
+     Body: 18.4 x 8.5 x 80 mm. Link origin at geometric center; long axis = +Z (tip at -Z). -->
+<robot name="qsfp_dd_rect_peg">
+  <link name="peg_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.08"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.00001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.0184 0.0085 0.08"/></geometry>
+      <material name="blue"><color rgba="0.2 0.45 0.85 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.0184 0.0085 0.08"/></geometry>
+    </collision>
+  </link>
+</robot>

@@ -11,11 +11,14 @@ import matplotlib.pyplot as plt
 import math
 
 class PegInHoleGymEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, gui=True, verbose=True):
         super().__init__()
-        self.physics_client = p.connect(p.GUI)  # Connect to PyBullet in GUI mode
-        
-        p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
+        self.gui = gui
+        self.verbose = verbose
+        self.physics_client = p.connect(p.GUI if gui else p.DIRECT)
+
+        if gui:
+            p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0, 0, -9.81)
 
@@ -43,13 +46,14 @@ class PegInHoleGymEnv(gym.Env):
         self.action_space = spaces.Box(low=-0.005, high=0.005, shape=(3,), dtype=np.float32)
 
         self.reset()
-        
-        p.resetDebugVisualizerCamera(
-            cameraDistance=1.0,    
-            cameraYaw=110,            
-            cameraPitch=-45,         
-            cameraTargetPosition=[0.5, 0, 0.5]  
-        )
+
+        if gui:
+            p.resetDebugVisualizerCamera(
+                cameraDistance=1.0,
+                cameraYaw=110,
+                cameraPitch=-45,
+                cameraTargetPosition=[0.5, 0, 0.5]
+            )
 
     def _load_env(self):
         # Load the plane and the table into the simulation
@@ -62,9 +66,10 @@ class PegInHoleGymEnv(gym.Env):
                                    p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True)
         self.eef_link_index = 6  # End-effector link index
         num_joints = p.getNumJoints(self.robot_id)
-        for i in range(num_joints):
-            info = p.getJointInfo(self.robot_id, i)
-            print(f"Index: {info[0]}, Name: {info[1].decode('utf-8')}")
+        if self.verbose:
+            for i in range(num_joints):
+                info = p.getJointInfo(self.robot_id, i)
+                print(f"Index: {info[0]}, Name: {info[1].decode('utf-8')}")
 
     def _parse_joint_info(self):
         # Extract joint information and identify controllable joints
@@ -161,16 +166,19 @@ class PegInHoleGymEnv(gym.Env):
 
 
         if collided:
-            print("Collision detected - resetting")
+            if self.verbose:
+                print("Collision detected - resetting")
             done = True
         else:
             done = self._check_done()
 
         if self._check_inserted():
-            print("Insertion successful")
+            if self.verbose:
+                print("Insertion successful")
             info={"insertion_success": True}
 
-        print(f"Step {self.step_count} | XY distance: {dist_xy:.5f} | Z distance: {dist_z:.5f} | Reward: {reward:.2f}")
+        if self.verbose:
+            print(f"Step {self.step_count} | XY distance: {dist_xy:.5f} | Z distance: {dist_z:.5f} | Reward: {reward:.2f}")
 
         truncated = self.step_count >= self.max_steps
 

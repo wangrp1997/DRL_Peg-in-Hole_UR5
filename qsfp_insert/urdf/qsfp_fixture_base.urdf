@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!-- Optical-breadboard style fixture pedestal under hole plate. Origin at box centre. -->
+<robot name="qsfp_fixture_base">
+  <link name="fixture_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="2.0"/>
+      <inertia ixx="0.005" ixy="0" ixz="0" iyy="0.005" iyz="0" izz="0.005"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.15 0.15 0.08"/></geometry>
+      <material name="black"><color rgba="0.12 0.12 0.14 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.15 0.15 0.08"/></geometry>
+    </collision>
+    <!-- top mounting surface highlight -->
+    <visual>
+      <origin xyz="0 0 0.039" rpy="0 0 0"/>
+      <geometry><box size="0.14 0.14 0.002"/></geometry>
+      <material name="silver"><color rgba="0.45 0.45 0.48 1"/></material>
+    </visual>
+  </link>
+</robot>

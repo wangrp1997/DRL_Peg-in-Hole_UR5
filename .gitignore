@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Local run artifacts
+outputs/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
