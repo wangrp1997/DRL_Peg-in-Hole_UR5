@@ -46,8 +46,7 @@ class FixedCamera:
         cx, cy = self.width / 2.0, self.height / 2.0
         return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
 
-    def render(self, with_depth_seg: bool = True, for_opencv: bool = True):
-        """for_opencv=True uses TINY_RENDERER so GUI corner previews stay on wrist camera only."""
+    def _view_projection(self) -> tuple[list[float], list[float]]:
         link_pos, link_ori = self._pose()
         rot = p.getMatrixFromQuaternion(link_ori)
         up = [rot[0], rot[3], rot[6]]
@@ -59,6 +58,11 @@ class FixedCamera:
             nearVal=self.near,
             farVal=self.far,
         )
+        return view, proj
+
+    def render(self, with_depth_seg: bool = True, for_opencv: bool = True):
+        """for_opencv=True uses TINY_RENDERER so GUI corner previews stay on wrist camera only."""
+        view, proj = self._view_projection()
         renderer = p.ER_TINY_RENDERER if for_opencv else p.ER_BULLET_HARDWARE_OPENGL
         kwargs = dict(
             viewMatrix=view,
@@ -76,16 +80,9 @@ class FixedCamera:
         return rgba_img, depth_m, seg_buf
 
     def project_world(self, point_world: tuple[float, float, float]) -> tuple[float, float, float]:
-        """World point → (u, v, Z_cam metres). OpenCV-style camera frame (+Z forward)."""
-        link_pos, link_ori = self._pose()
-        inv_pos, inv_orn = p.invertTransform(link_pos, link_ori)
-        p_cam, _ = p.multiplyTransforms(inv_pos, inv_orn, point_world, [0.0, 0.0, 0.0, 1.0])
-        x_cv, y_cv, z_cv = -p_cam[0], -p_cam[1], -p_cam[2]
-        if z_cv <= 1e-6:
-            return float("nan"), float("nan"), float("nan")
-        u = self.K[0, 0] * x_cv / z_cv + self.K[0, 2]
-        v = self.K[1, 1] * y_cv / z_cv + self.K[1, 2]
-        return float(u), float(v), float(z_cv)
+        """World point → (u, v, ndc_z) using the same view/proj as render()."""
+        view, proj = self._view_projection()
+        return project_world_gl(view, proj, point_world, self.width, self.height)
 
     def backproject(self, u: float, v: float, depth_m: float) -> np.ndarray:
         x = (u - self.K[0, 2]) * depth_m / self.K[0, 0]
@@ -95,6 +92,27 @@ class FixedCamera:
 
 def depth_buffer_to_meters(depth_buf: np.ndarray, near: float, far: float) -> np.ndarray:
     return (far * near / (far - (far - near) * depth_buf)).astype(np.float32)
+
+
+def _mat4_col_major(flat16: list[float]) -> np.ndarray:
+    return np.array(flat16, dtype=np.float64).reshape(4, 4, order="F")
+
+
+def project_world_gl(
+    view: list[float],
+    proj: list[float],
+    point_world: tuple[float, float, float],
+    width: int,
+    height: int,
+) -> tuple[float, float, float]:
+    """PyBullet getCameraImage view/proj → pixel (u,v) and NDC depth."""
+    clip = _mat4_col_major(proj) @ _mat4_col_major(view) @ np.array([*point_world, 1.0], dtype=np.float64)
+    if clip[3] <= 1e-9:
+        return float("nan"), float("nan"), float("nan")
+    ndc = clip[:3] / clip[3]
+    u = (ndc[0] + 1.0) * 0.5 * width
+    v = (1.0 - ndc[1]) * 0.5 * height
+    return float(u), float(v), float(ndc[2])
 
 
 def target_for_hole(hole_xy: tuple[float, float]) -> tuple[float, float, float]:

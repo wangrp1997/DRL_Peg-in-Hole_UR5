@@ -9,7 +9,7 @@ python qsfp_insert/demo/servo_align.py --gui
 python qsfp_insert/demo/servo_align.py --gui --wrist_cam [--opencv_render] [--insert]
 python qsfp_insert/demo/servo_align.py --gui --fixed_cam [--opencv_render] [--insert]
 python qsfp_insert/demo/ur5_insert.py --gui [--wrist_cam] [--fixed_cam] [--opencv_render]
-python qsfp_insert/demo/fixed_camera_demo.py --gui [--seed 42] [--opencv_render]
+python qsfp_insert/demo/fixed_camera_demo.py --gui [--seed 42] [--draw_keypoints] [--align]
 python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 [--insert]
 ```
 
@@ -23,5 +23,6 @@ python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 [--insert]
 |------|------|
 | `demo/` | 可运行入口脚本 |
 | `sim/` | PyBullet 场景、外置相机、笛卡尔伺服 |
+| `vision/` | GT 角点、图像 overlay、后续视觉对准 |
 | `constants.py` / `geometry.py` | 尺寸与判据 |
 | `urdf/` | 孔板、治具、轴、UR5、外置相机 |

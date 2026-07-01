@@ -254,13 +254,17 @@ def _label(img: np.ndarray, text: str) -> np.ndarray:
     return out
 
 
-def _show_panel(window: str, rgba, depth, seg) -> None:
+def _show_panel(window: str, rgba, depth, seg, keypoint_sets=None) -> None:
     import cv2
 
-    rgb = cv2.cvtColor(rgba[:, :, :3].astype(np.uint8), cv2.COLOR_RGBA2BGR)
+    bgr = cv2.cvtColor(rgba[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+    if keypoint_sets:
+        from vision.overlay import draw_keypoints_on_bgr
+
+        draw_keypoints_on_bgr(bgr, keypoint_sets)
     panel = np.hstack(
         [
-            _label(rgb, "RGB"),
+            _label(bgr, "RGB"),
             _label(_depth_bgr(depth), "Depth"),
             _label(_seg_bgr(seg), "Seg"),
         ]
@@ -299,8 +303,17 @@ def _render_wrist_cam(with_depth_seg: bool, for_opencv: bool):
     return rgba_img, depth_buf, seg_buf
 
 
-def refresh_camera_views() -> None:
-    """GUI corner: one HARDWARE_OPENGL render. OpenCV: TINY only (or reuse GUI frame)."""
+def get_fixed_camera() -> FixedCamera | None:
+    return _fixed_cam
+
+
+def show_fixed_camera_panel(get_keypoint_sets=None) -> None:
+    """OpenCV fixed-cam panel; reuses refresh_camera_views (HARDWARE when GUI fixed active)."""
+    refresh_camera_views(get_keypoint_sets)
+
+
+def refresh_camera_views(get_keypoint_sets=None) -> None:
+    """GUI corner: one HARDWARE_OPENGL render. OpenCV reuses that frame when available."""
     wrist_buf = None
     fixed_buf = None
 
@@ -316,10 +329,11 @@ def refresh_camera_views() -> None:
             _show_panel(_WRIST_WINDOW, *_render_wrist_cam(True, for_opencv=True))
 
     if _fixed_opencv:
+        sets = get_keypoint_sets() if get_keypoint_sets is not None else None
         if fixed_buf is not None:
-            _show_panel(_FIXED_WINDOW, *fixed_buf)
+            _show_panel(_FIXED_WINDOW, *fixed_buf, sets)
         elif _fixed_cam is not None:
-            _show_panel(_FIXED_WINDOW, *_fixed_cam.render(True, for_opencv=True))
+            _show_panel(_FIXED_WINDOW, *_fixed_cam.render(True, for_opencv=True), sets)
 
 
 def close_camera_windows() -> None:
