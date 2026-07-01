@@ -86,7 +86,7 @@ def load_fixture(hole_xy: tuple[float, float]) -> int:
     )
 
 
-def load_scene(gui: bool):
+def load_scene(gui: bool, hole_xy: tuple[float, float] | None = None):
     """Return robot_id, arm, eef_idx, peg_idx, hole_id, hole_xy."""
     p.loadURDF("plane.urdf")
     p.loadURDF("table/table.urdf", [0.4, 0, 0], p.getQuaternionFromEuler([0, 0, 1.57079632679]))
@@ -100,8 +100,9 @@ def load_scene(gui: bool):
         p.setJointMotorControl2(robot_id, j, p.POSITION_CONTROL, q, force=500)
     settle(120)
 
-    tip0 = peg_tip_world(robot_id, peg)
-    hole_xy = (tip0[0], tip0[1])
+    if hole_xy is None:
+        tip0 = peg_tip_world(robot_id, peg)
+        hole_xy = (tip0[0], tip0[1])
     load_fixture(hole_xy)
     hole_id = p.loadURDF(urdf("qsfp_dd_hole_plate.urdf"), [hole_xy[0], hole_xy[1], PLATE_TOP_Z], useFixedBase=True)
     if gui:

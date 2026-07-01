@@ -32,31 +32,35 @@ def jacobian_tip(robot_id: int, peg_link: int, arm: list[int]) -> np.ndarray:
     return np.vstack([jt, jr])
 
 
-def _clip_twist(twist: np.ndarray) -> np.ndarray:
-    out = twist.copy()
-    lin = np.linalg.norm(out[:3])
-    if lin > CART_MAX_LIN:
-        out[:3] *= CART_MAX_LIN / lin
-    ang = np.linalg.norm(out[3:])
-    if ang > CART_MAX_ANG:
-        out[3:] *= CART_MAX_ANG / ang
-    return out
+def _clip_xy(vx: float, vy: float) -> tuple[float, float]:
+    vxy = np.array([vx, vy])
+    n = np.linalg.norm(vxy)
+    if n > CART_MAX_LIN:
+        vxy *= CART_MAX_LIN / n
+    return float(vxy[0]), float(vxy[1])
+
+
+def _clip_z(vz: float) -> float:
+    return float(max(-CART_MAX_LIN, min(CART_MAX_LIN, vz)))
+
+
+def _clip_angular(wx: float, wy: float, wz: float) -> tuple[float, float, float]:
+    w = np.array([wx, wy, wz])
+    n = np.linalg.norm(w)
+    if n > CART_MAX_ANG:
+        w *= CART_MAX_ANG / n
+    return float(w[0]), float(w[1]), float(w[2])
 
 
 def alignment_twist(dx: float, dy: float, standoff: float, roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """Proportional 6D twist toward hole-frame alignment."""
-    vx = -CART_XY_GAIN * dx
-    vy = -CART_XY_GAIN * dy
+    """Proportional 6D twist; XY / Z / angular clipped separately so descent is not starved."""
+    vx, vy = _clip_xy(-CART_XY_GAIN * dx, -CART_XY_GAIN * dy)
     if standoff > ALIGN_Z_STANDOFF_MAX:
         vz = -CART_MAX_LIN
-    elif standoff < ALIGN_Z_STANDOFF_MIN:
-        vz = CART_Z_GAIN * (ALIGN_Z_NOMINAL - standoff)
     else:
-        vz = CART_Z_GAIN * (ALIGN_Z_NOMINAL - standoff)
-    wx = -CART_ROT_GAIN * roll
-    wy = -CART_ROT_GAIN * pitch
-    wz = -CART_ROT_GAIN * yaw
-    return _clip_twist(np.array([vx, vy, vz, wx, wy, wz]))
+        vz = _clip_z(CART_Z_GAIN * (ALIGN_Z_NOMINAL - standoff))
+    wx, wy, wz = _clip_angular(-CART_ROT_GAIN * roll, -CART_ROT_GAIN * pitch, -CART_ROT_GAIN * yaw)
+    return np.array([vx, vy, vz, wx, wy, wz])
 
 
 def apply_cartesian_velocity(

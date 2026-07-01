@@ -7,7 +7,10 @@ QSFP-DD 方孔 + 矩形轴，PyBullet 物理验证（独立于 `rlenv.py`）。
 ```bash
 python qsfp_insert/demo/physics_insert.py --gui   # 仅 peg+孔，测插入物理
 python qsfp_insert/demo/ur5_insert.py --gui       # UR5+桌+孔，IK 下插
-python qsfp_insert/demo/servo_align.py --gui     # UR5 笛卡尔速度伺服对准孔口（不插入）
+python qsfp_insert/demo/servo_align.py --gui              # 对准孔口（不插入）
+python qsfp_insert/demo/servo_align.py --gui --insert     # 对准后继续下插
+python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42            # 批量对准
+python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 --insert   # 批量对准+插入
 ```
 
 对准容差见 `constants.py`（文献暂定值，非相机假设）。
