@@ -55,3 +55,19 @@ FIXED_CAM_UP = (0.0, 0.0, 1.0)
 FIXED_CAM_ROLL_DEG = 90.0
 # fixed_camera_demo: peg tip standoff above hole mouth ( > ALIGN_Z_STANDOFF_MAX, < rest pose ).
 FIXED_CAM_DEMO_STANDOFF = 0.035
+
+# corner_servo_align: IK to this standoff, then random 6D perturbation, then keypoint servo
+CORNER_SERVO_STANDOFF = FIXED_CAM_DEMO_STANDOFF
+PERTURB_XY_M = 0.008
+PERTURB_Z_M = 0.004
+PERTURB_ROLL_RAD = 0.07
+PERTURB_PITCH_RAD = 0.07
+PERTURB_YAW_RAD = 0.10
+MIN_CORNERS_VISIBLE = 3
+SETTLE_IK_STEPS = 40
+SETTLE_IK_STEPS_GUI = 40
+GUI_SERVO_REFRESH_EVERY = 3
+PERTURB_SERVO_PAUSE_S = 3.0  # GUI: pause after perturb before corner servo
+CORNER_ALIGN_METHOD = "kabsch"  # "kabsch" | "ibvs"
+IBVS_TWIST_GAIN = 0.5
+IBVS_PIXEL_TOL = 1.5  # px RMS for optional pixel convergence check

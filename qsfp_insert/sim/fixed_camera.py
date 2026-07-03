@@ -89,6 +89,32 @@ class FixedCamera:
         y = (v - self.K[1, 2]) * depth_m / self.K[1, 1]
         return np.array([x, y, depth_m], dtype=np.float64)
 
+    def ray_world(self, u: float, v: float) -> tuple[np.ndarray, np.ndarray]:
+        """World-frame ray through pixel (matches render view/proj, not link frame)."""
+        view, proj = self._view_projection()
+        inv_vp = np.linalg.inv(_mat4_col_major(proj) @ _mat4_col_major(view))
+        ndc_x = 2.0 * u / self.width - 1.0
+        ndc_y = 1.0 - 2.0 * v / self.height
+
+        def _world(ndc_z: float) -> np.ndarray:
+            h = inv_vp @ np.array([ndc_x, ndc_y, ndc_z, 1.0], dtype=np.float64)
+            return h[:3] / h[3]
+
+        p_near, p_far = _world(-1.0), _world(1.0)
+        direction = p_far - p_near
+        direction /= np.linalg.norm(direction)
+        return p_near, direction
+
+    def world_point_on_plane(self, u: float, v: float, plane_z: float) -> tuple[float, float, float] | None:
+        origin, direction = self.ray_world(u, v)
+        if abs(direction[2]) < 1e-9:
+            return None
+        t = (plane_z - origin[2]) / direction[2]
+        if t < 0.0:
+            return None
+        pt = origin + t * direction
+        return float(pt[0]), float(pt[1]), float(pt[2])
+
 
 def depth_buffer_to_meters(depth_buf: np.ndarray, near: float, far: float) -> np.ndarray:
     return (far * near / (far - (far - near) * depth_buf)).astype(np.float32)

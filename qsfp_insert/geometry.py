@@ -89,6 +89,10 @@ def is_aligned(
     return alignment_metrics(tip_xyz, peg_orn, hole_xy, hole_orn)["aligned"]
 
 
+def metrics_converged(m: AlignmentMetrics) -> bool:
+    return _check_aligned(m["dx"], m["dy"], m["standoff"], m["roll"], m["pitch"], m["yaw"])
+
+
 def is_inserted(
     tip_xyz: tuple[float, float, float],
     hole_xy: tuple[float, float],

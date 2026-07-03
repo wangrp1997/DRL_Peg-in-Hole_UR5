@@ -1,1 +1,429 @@
-"""6-DOF alignment from matched 2D/3D keypoints (Kabsch + twist); TODO for visual servo."""
+"""6-DOF alignment error from matched peg/hole image corners (geometric corner servo)."""
+from __future__ import annotations
+
+import math
+from typing import Literal
+
+import cv2
+import numpy as np
+import pybullet as p
+
+from constants import (
+    CART_LAMBDA,
+    CORNER_ALIGN_METHOD,
+    CORNER_SERVO_STANDOFF,
+    IBVS_PIXEL_TOL,
+    IBVS_TWIST_GAIN,
+    MIN_CORNERS_VISIBLE,
+    PEG_H,
+    PEG_W,
+    PLATE_TOP_Z,
+)
+from geometry import AlignmentMetrics, metrics_converged, rpy_error
+from sim.fixed_camera import FixedCamera
+from vision.corners import HOLE_HALF_X, HOLE_HALF_Y, ImageKeypoints
+
+AlignMethod = Literal["kabsch", "ibvs"]
+
+
+def _set_by_name(sets: list[ImageKeypoints]) -> tuple[ImageKeypoints, ImageKeypoints]:
+    hole = next(s for s in sets if s.name == "hole")
+    peg = next(s for s in sets if s.name == "peg")
+    return hole, peg
+
+
+def _insert_up(hole_orn) -> np.ndarray:
+    """World +Z offset from hole mouth toward peg standoff (opposite insert axis)."""
+    mat = np.array(p.getMatrixFromQuaternion(hole_orn), dtype=np.float64).reshape(3, 3)
+    return mat[:, 2]
+
+
+def _sample_depth(depth_map: np.ndarray, cam: FixedCamera, u: float, v: float) -> float | None:
+    ui = int(round(u))
+    vi = int(round(v))
+    ui = max(0, min(cam.width - 1, ui))
+    vi = max(0, min(cam.height - 1, vi))
+    depth_m = float(depth_map[vi, ui])
+    if depth_m >= cam.far * 0.99:
+        return None
+    return depth_m
+
+
+def _corner_world_on_plane(
+    cam: FixedCamera,
+    u: float,
+    v: float,
+    plane_z: float,
+) -> np.ndarray | None:
+    pt = cam.world_point_on_plane(u, v, plane_z)
+    if pt is None:
+        return None
+    return np.array(pt, dtype=np.float64)
+
+
+def _peg_corner_world(
+    cam: FixedCamera,
+    u: float,
+    v: float,
+    hole_pt: np.ndarray,
+    eye: np.ndarray,
+    standoff: float,
+    up: np.ndarray,
+    depth_map: np.ndarray | None,
+) -> np.ndarray | None:
+    if depth_map is not None:
+        depth_m = _sample_depth(depth_map, cam, u, v)
+        if depth_m is not None:
+            origin, direction = cam.ray_world(u, v)
+            return origin + depth_m * direction
+    origin, direction = cam.ray_world(u, v)
+    th = float(np.linalg.norm(hole_pt - eye))
+    tp = th - standoff * float(np.dot(up, direction))
+    if tp <= 0.0:
+        return None
+    return origin + tp * direction
+
+
+def _quat_from_corner_pts(pts: np.ndarray) -> tuple[float, float, float, float]:
+    p0 = pts[0]
+    p1 = pts[1]
+    p3 = pts[min(3, len(pts) - 1)]
+    x = p1 - p0
+    x /= np.linalg.norm(x)
+    y = p3 - p0
+    z = np.cross(x, y)
+    zn = np.linalg.norm(z)
+    if zn < 1e-9:
+        return (0.0, 0.0, 0.0, 1.0)
+    z /= zn
+    y = np.cross(z, x)
+    return _mat3_to_quat(np.column_stack([x, y, z]))
+
+
+def _mat3_to_quat(rot: np.ndarray) -> tuple[float, float, float, float]:
+    x = rot[:, 0]
+    y = rot[:, 1]
+    z = np.cross(x, y)
+    zn = np.linalg.norm(z)
+    if zn < 1e-9:
+        return (0.0, 0.0, 0.0, 1.0)
+    z = z / zn
+    y = np.cross(z, x)
+    mat = np.column_stack([x, y, z])
+    tr = float(np.trace(mat))
+    if tr > 0.0:
+        s = float(np.sqrt(tr + 1.0) * 2.0)
+        return (
+            (mat[2, 1] - mat[1, 2]) / s,
+            (mat[0, 2] - mat[2, 0]) / s,
+            (mat[1, 0] - mat[0, 1]) / s,
+            0.25 * s,
+        )
+    if mat[0, 0] > mat[1, 1] and mat[0, 0] > mat[2, 2]:
+        s = float(np.sqrt(1.0 + mat[0, 0] - mat[1, 1] - mat[2, 2]) * 2.0)
+        return (0.25 * s, (mat[0, 1] + mat[1, 0]) / s, (mat[0, 2] + mat[2, 0]) / s, (mat[2, 1] - mat[1, 2]) / s)
+    if mat[1, 1] > mat[2, 2]:
+        s = float(np.sqrt(1.0 + mat[1, 1] - mat[0, 0] - mat[2, 2]) * 2.0)
+        return ((mat[0, 1] + mat[1, 0]) / s, 0.25 * s, (mat[1, 2] + mat[2, 1]) / s, (mat[0, 2] - mat[2, 0]) / s)
+    s = float(np.sqrt(1.0 + mat[2, 2] - mat[0, 0] - mat[1, 1]) * 2.0)
+    return ((mat[0, 2] + mat[2, 0]) / s, (mat[1, 2] + mat[2, 1]) / s, 0.25 * s, (mat[1, 0] - mat[0, 1]) / s)
+
+
+def _world_to_cam(cam: FixedCamera, pt_world: np.ndarray) -> np.ndarray:
+    cam_pos, cam_orn = cam._pose()
+    inv_pos, inv_orn = p.invertTransform(cam_pos, cam_orn)
+    pt_cam, _ = p.multiplyTransforms(inv_pos, inv_orn, pt_world.tolist(), [0.0, 0.0, 0.0, 1.0])
+    return np.array(pt_cam, dtype=np.float64)
+
+
+def _cam_rot_to_world(cam: FixedCamera) -> np.ndarray:
+    _, cam_orn = cam._pose()
+    return np.array(p.getMatrixFromQuaternion(cam_orn), dtype=np.float64).reshape(3, 3)
+
+
+def _skew(v: np.ndarray) -> np.ndarray:
+    x, y, z = float(v[0]), float(v[1]), float(v[2])
+    return np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]], dtype=np.float64)
+
+
+def _cam_rot_world_to_cam(cam: FixedCamera) -> np.ndarray:
+    return _cam_rot_to_world(cam).T
+
+
+def _depth_cam_z(cam: FixedCamera, depth_map: np.ndarray, u: float, v: float) -> float | None:
+    """Ray depth from render → camera-frame Z for interaction matrix."""
+    ray_len = _sample_depth(depth_map, cam, u, v)
+    if ray_len is None:
+        return None
+    origin, direction = cam.ray_world(u, v)
+    pt_cam = _world_to_cam(cam, origin + ray_len * direction)
+    z = _cam_depth(pt_cam)
+    return z if z > 1e-6 else None
+
+
+def _ee_to_cam_point_jacobian(r_cw: np.ndarray, r_world: np.ndarray) -> np.ndarray:
+    """Map peg-tip twist (world) → 3D point twist (camera): v_p = v + ω×r."""
+    s = _skew(r_world)
+    return np.vstack([np.hstack([r_cw, -r_cw @ s]), np.hstack([np.zeros((3, 3)), r_cw])])
+
+
+def _interaction_matrix_point(cam: FixedCamera, u: float, v: float, z: float) -> np.ndarray:
+    mat = _interaction_matrix_points(cam, [(u, v)], [z])
+    if mat is None:
+        raise ValueError("invalid depth for interaction matrix")
+    return mat
+
+
+def ibvs_pixel_error(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> float | None:
+    """RMS pixel residual ||s_peg − s_hole|| over matched corners."""
+    sq = 0.0
+    n = 0
+    for i in range(4):
+        if not (hole_kp.visible[i] and peg_kp.visible[i]):
+            continue
+        du = peg_kp.uv[i][0] - hole_kp.uv[i][0]
+        dv = peg_kp.uv[i][1] - hole_kp.uv[i][1]
+        sq += du * du + dv * dv
+        n += 1
+    if n < MIN_CORNERS_VISIBLE:
+        return None
+    return float(math.sqrt(sq / n))
+
+
+def ibvs_pixels_converged(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> bool:
+    err = ibvs_pixel_error(hole_kp, peg_kp)
+    return err is not None and err <= IBVS_PIXEL_TOL
+
+
+def _damped_pinv(j: np.ndarray, lam: float = CART_LAMBDA) -> np.ndarray:
+    n = j.shape[0]
+    return j.T @ np.linalg.inv(j @ j.T + lam**2 * np.eye(n))
+
+
+def _paired_corners_3d(
+    cam: FixedCamera,
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+    z_hole: float,
+    standoff: float,
+    hole_orn,
+    depth_map: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, list[tuple[float, float]], list[np.ndarray]] | None:
+    eye = np.array(cam._pose()[0], dtype=np.float64)
+    up = _insert_up(hole_orn)
+    hole_pts: list[np.ndarray] = []
+    peg_pts: list[np.ndarray] = []
+    peg_uv: list[tuple[float, float]] = []
+
+    for i in range(4):
+        if not (hole_kp.visible[i] and peg_kp.visible[i]):
+            continue
+        hu, hv = hole_kp.uv[i]
+        pu, pv = peg_kp.uv[i]
+        hw = _corner_world_on_plane(cam, hu, hv, z_hole)
+        if hw is None:
+            return None
+        pw = _peg_corner_world(cam, pu, pv, hw, eye, standoff, up, depth_map)
+        if pw is None:
+            return None
+        hole_pts.append(hw)
+        peg_pts.append(pw)
+        peg_uv.append((pu, pv))
+
+    if len(hole_pts) < MIN_CORNERS_VISIBLE:
+        return None
+
+    peg_cam = [_world_to_cam(cam, pw) for pw in peg_pts]
+    return np.stack(hole_pts), np.stack(peg_pts), peg_uv, peg_cam
+
+
+def _interaction_matrix_points(
+    cam: FixedCamera,
+    uv: list[tuple[float, float]],
+    z_cam: list[float],
+) -> np.ndarray | None:
+    fx = cam.K[0, 0]
+    fy = cam.K[1, 1]
+    cx = cam.K[0, 2]
+    cy = cam.K[1, 2]
+    rows: list[list[float]] = []
+    for (u, v), z in zip(uv, z_cam):
+        if z <= 1e-6:
+            return None
+        uc = u - cx
+        vc = v - cy
+        rows.append([-fx / z, 0.0, uc / z, uc * vc / fx, -(fx * fx + uc * uc) / fx, vc])
+        rows.append([0.0, -fy / z, vc / z, (fy * fy + vc * vc) / fy, -uc * vc / fy, -uc])
+    return np.array(rows, dtype=np.float64)
+
+
+def _rect_object_points(half_x: float, half_y: float) -> np.ndarray:
+    return np.array(
+        [
+            [-half_x, -half_y, 0.0],
+            [half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, half_y, 0.0],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _solve_planar_pose(
+    uv: list[tuple[float, float]],
+    object_pts: np.ndarray,
+    cam: FixedCamera,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    img = np.array(uv, dtype=np.float64)
+    dist = np.zeros(5, dtype=np.float64)
+    ok, rvec, tvec = cv2.solvePnP(object_pts, img, cam.K, dist, flags=cv2.SOLVEPNP_IPPE)
+    if not ok:
+        return None
+    rot_c, _ = cv2.Rodrigues(rvec)
+    return rot_c, tvec.reshape(3)
+
+
+def _cam_to_world(cam: FixedCamera, rot_c: np.ndarray, trans_c: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    rot_wc = _cam_rot_to_world(cam)
+    eye = np.array(cam._pose()[0], dtype=np.float64)
+    return rot_wc @ rot_c, rot_wc @ trans_c + eye
+
+
+def _matched_uv(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> tuple[list[tuple[float, float]], list[tuple[float, float]]] | None:
+    hole_uv: list[tuple[float, float]] = []
+    peg_uv: list[tuple[float, float]] = []
+    for i in range(4):
+        if hole_kp.visible[i] and peg_kp.visible[i]:
+            hole_uv.append(hole_kp.uv[i])
+            peg_uv.append(peg_kp.uv[i])
+    if len(hole_uv) < MIN_CORNERS_VISIBLE:
+        return None
+    return hole_uv, peg_uv
+
+
+def _metrics_kabsch(
+    cam: FixedCamera,
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+    standoff: float,
+    hole_orn,
+    depth_map: np.ndarray | None,
+) -> AlignmentMetrics | None:
+    """Planar PnP on matched corners → peg pose relative to hole (6D)."""
+    del hole_orn, depth_map
+    matched = _matched_uv(hole_kp, peg_kp)
+    if matched is None:
+        return None
+    hole_uv, peg_uv = matched
+    hole_pose = _solve_planar_pose(hole_uv, _rect_object_points(HOLE_HALF_X, HOLE_HALF_Y), cam)
+    peg_pose = _solve_planar_pose(peg_uv, _rect_object_points(PEG_W / 2.0, PEG_H / 2.0), cam)
+    if hole_pose is None or peg_pose is None:
+        return None
+    rot_h, trans_h = _cam_to_world(cam, *hole_pose)
+    rot_p, trans_p = _cam_to_world(cam, *peg_pose)
+    rot_rel = rot_h.T @ rot_p
+    trans_rel = rot_h.T @ (trans_p - trans_h)
+    roll, pitch, yaw = rpy_error(_mat3_to_quat(rot_rel), (0.0, 0.0, 0.0, 1.0))
+    return {
+        "dx": float(trans_rel[0]),
+        "dy": float(trans_rel[1]),
+        "standoff": standoff,
+        "roll": roll,
+        "pitch": pitch,
+        "yaw": yaw,
+        "aligned": False,
+    }
+
+
+def _metrics_ibvs(
+    cam: FixedCamera,
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+    standoff: float,
+    hole_orn,
+    depth_map: np.ndarray | None,
+) -> AlignmentMetrics | None:
+    """Pose error via planar PnP (same as kabsch); IBVS only drives control."""
+    del depth_map
+    return _metrics_kabsch(cam, hole_kp, peg_kp, standoff, hole_orn, None)
+
+
+def _corner_cam_z(cam: FixedCamera, pt_world: tuple[float, float, float] | np.ndarray) -> float | None:
+    pc = _world_to_cam(cam, np.array(pt_world, dtype=np.float64))
+    z = _cam_depth(pc)
+    return z if z > 1e-6 else None
+
+
+def ibvs_twist_tip(
+    cam: FixedCamera,
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+    peg_corners_world: list[tuple[float, float, float]],
+    tip_world: tuple[float, float, float],
+    depth_map: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Eye-to-hand IBVS: v_tip = λ J_ee+ (−e). Sim: GT corner Z; real: optional depth_map."""
+    r_cw = _cam_rot_world_to_cam(cam)
+    tip = np.array(tip_world, dtype=np.float64)
+    j_rows: list[np.ndarray] = []
+    err: list[float] = []
+
+    for i in range(4):
+        if not (hole_kp.visible[i] and peg_kp.visible[i]):
+            continue
+        pu, pv = peg_kp.uv[i]
+        hu, hv = hole_kp.uv[i]
+        err.extend([pu - hu, pv - hv])
+
+        z = _corner_cam_z(cam, peg_corners_world[i])
+        if z is None and depth_map is not None:
+            z = _depth_cam_z(cam, depth_map, pu, pv)
+        if z is None or z <= 1e-6:
+            return None
+
+        r = np.array(peg_corners_world[i], dtype=np.float64) - tip
+        l_i = _interaction_matrix_point(cam, pu, pv, z)
+        m_i = _ee_to_cam_point_jacobian(r_cw, r)
+        j_rows.append(l_i @ m_i)
+
+    if len(j_rows) < MIN_CORNERS_VISIBLE:
+        return None
+
+    j_mat = np.vstack(j_rows)
+    e = np.array(err, dtype=np.float64)
+    return IBVS_TWIST_GAIN * (_damped_pinv(j_mat) @ (-e))
+
+
+def _cam_depth(pt_cam: np.ndarray) -> float:
+    return float(-pt_cam[2])
+
+
+def metrics_from_keypoints(
+    keypoints: list[ImageKeypoints],
+    cam: FixedCamera,
+    hole_xy: tuple[float, float],
+    hole_orn=None,
+        depth_map: np.ndarray | None = None,
+        standoff_hint: float | None = None,
+        method: AlignMethod | None = None,
+) -> AlignmentMetrics | None:
+    """P/H corner pixels → 6D alignment error (planar PnP or 8-feature IBVS)."""
+    del hole_xy
+    if hole_orn is None:
+        return None
+    hole_kp, peg_kp = _set_by_name(keypoints)
+    if sum(hole_kp.visible) < MIN_CORNERS_VISIBLE or sum(peg_kp.visible) < MIN_CORNERS_VISIBLE:
+        return None
+
+    standoff = standoff_hint if standoff_hint is not None else CORNER_SERVO_STANDOFF
+    align_method = method if method is not None else CORNER_ALIGN_METHOD
+
+    if align_method == "ibvs":
+        m = _metrics_ibvs(cam, hole_kp, peg_kp, standoff, hole_orn, depth_map)
+    else:
+        m = _metrics_kabsch(cam, hole_kp, peg_kp, standoff, hole_orn, depth_map)
+
+    if m is None:
+        return None
+    m["aligned"] = metrics_converged(m)
+    return m

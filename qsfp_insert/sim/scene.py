@@ -130,6 +130,7 @@ def move_tip_to_standoff(
     standoff: float,
     ee_orn=None,
     gui: bool = False,
+    settle_steps: int | None = None,
 ) -> None:
     """IK: peg tip at hole_xy, standoff metres above plate mouth (PLATE_TOP_Z)."""
     if ee_orn is None:
@@ -148,7 +149,15 @@ def move_tip_to_standoff(
         ],
         ee_orn,
     )
-    settle(120 if gui else 40, gui)
+    if settle_steps is None:
+        from constants import SETTLE_IK_STEPS, SETTLE_IK_STEPS_GUI
+
+        settle_steps = SETTLE_IK_STEPS_GUI if gui else SETTLE_IK_STEPS
+    settle(settle_steps, gui)
+
+
+def set_hole_opaque(hole_id: int) -> None:
+    p.changeVisualShape(hole_id, -1, rgbaColor=[0.55, 0.55, 0.55, 1.0])
 
 
 def load_fixture(hole_xy: tuple[float, float]) -> int:
