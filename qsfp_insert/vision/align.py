@@ -315,18 +315,88 @@ def _solve_planar_pose(
     uv: list[tuple[float, float]],
     object_pts: np.ndarray,
     cam: FixedCamera,
+    score_indices: list[int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    if len(uv) < 3:
+    """4 coplanar corners → 6D pose: IPPE init, 3-point disambiguation if needed, LM refine."""
+    n = len(uv)
+    if n < 4 or object_pts.shape[0] < 4:
         return None
     img = np.array(uv, dtype=np.float64)
-    obj = object_pts[: len(uv)] if len(uv) < 4 else object_pts
+    obj = np.asarray(object_pts[:4], dtype=np.float64)
     dist = np.zeros(5, dtype=np.float64)
-    flag = cv2.SOLVEPNP_IPPE if len(uv) >= 4 else cv2.SOLVEPNP_SQPNP
-    ok, rvec, tvec = cv2.solvePnP(obj, img, cam.K, dist, flags=flag)
+    ok, rvecs, tvecs, _ = cv2.solvePnPGeneric(obj, img, cam.K, dist, flags=cv2.SOLVEPNP_IPPE)
+    if not ok or len(rvecs) == 0:
+        return None
+    if score_indices is None:
+        score_indices = list(range(4))
+
+    def _valid(rvec, tvec) -> bool:
+        rot_c, _ = cv2.Rodrigues(rvec)
+        t = tvec.reshape(3)
+        z = rot_c @ obj.T + t.reshape(3, 1)
+        return not np.any(z[2, :] <= 0.0)
+
+    def _reproj_err(rvec, tvec, indices: list[int]) -> float:
+        proj, _ = cv2.projectPoints(obj, rvec, tvec, cam.K, dist)
+        err = 0.0
+        for i in indices:
+            du = float(proj[i, 0, 0]) - img[i, 0]
+            dv = float(proj[i, 0, 1]) - img[i, 1]
+            err += du * du + dv * dv
+        return err
+
+    candidates: list[tuple[np.ndarray, np.ndarray, float]] = []
+    for rvec, tvec in zip(rvecs, tvecs):
+        if not _valid(rvec, tvec):
+            continue
+        candidates.append((rvec, tvec, _reproj_err(rvec, tvec, score_indices)))
+
+    # When corner 0 is inferred (score on 1–3), pick IPPE branch via 3-point PnP + parallelogram p0.
+    if score_indices == [1, 2, 3] and len(candidates) > 1:
+        img3 = img[[1, 2, 3]]
+        obj3 = obj[[1, 2, 3]]
+        ok3, rvecs3, tvecs3, _ = cv2.solvePnPGeneric(obj3, img3, cam.K, dist, flags=cv2.SOLVEPNP_SQPNP)
+        if ok3 and len(rvecs3) > 0:
+            para0 = img[0]
+            best_pose: tuple[np.ndarray, np.ndarray] | None = None
+            best_d = float("inf")
+            for rvec, tvec in zip(rvecs3, tvecs3):
+                if not _valid(rvec, tvec):
+                    continue
+                proj, _ = cv2.projectPoints(obj[[0]], rvec, tvec, cam.K, dist)
+                d = float((proj[0, 0, 0] - para0[0]) ** 2 + (proj[0, 0, 1] - para0[1]) ** 2)
+                if d < best_d:
+                    best_d = d
+                    best_pose = (rvec, tvec)
+            if best_pose is not None:
+                candidates = [(best_pose[0], best_pose[1], _reproj_err(best_pose[0], best_pose[1], score_indices))]
+
+    if not candidates:
+        return None
+    rvec, tvec, _ = min(candidates, key=lambda c: c[2])
+    ok, rvec, tvec = cv2.solvePnP(
+        obj,
+        img,
+        cam.K,
+        dist,
+        rvec,
+        tvec,
+        useExtrinsicGuess=True,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
     if not ok:
         return None
     rot_c, _ = cv2.Rodrigues(rvec)
     return rot_c, tvec.reshape(3)
+
+
+def _planar_pose_indices(kp: ImageKeypoints) -> tuple[list[int], list[int]] | None:
+    """All four corners visible; score IPPE on non-inferred corners only."""
+    if sum(kp.visible) < 4:
+        return None
+    all_idx = list(range(4))
+    score = [i for i in all_idx if not kp.inferred[i]]
+    return all_idx, score if score else all_idx
 
 
 def _cam_to_world(cam: FixedCamera, rot_c: np.ndarray, trans_c: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -335,16 +405,21 @@ def _cam_to_world(cam: FixedCamera, rot_c: np.ndarray, trans_c: np.ndarray) -> t
     return rot_wc @ rot_c, rot_wc @ trans_c + eye
 
 
-def _matched_uv(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> tuple[list[tuple[float, float]], list[tuple[float, float]]] | None:
+def _matched_uv(
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]], list[int]] | None:
     hole_uv: list[tuple[float, float]] = []
     peg_uv: list[tuple[float, float]] = []
+    indices: list[int] = []
     for i in range(4):
         if hole_kp.visible[i] and peg_kp.visible[i]:
             hole_uv.append(hole_kp.uv[i])
             peg_uv.append(peg_kp.uv[i])
-    if len(hole_uv) < MIN_CORNERS_VISIBLE:
+            indices.append(i)
+    if len(indices) < MIN_CORNERS_VISIBLE:
         return None
-    return hole_uv, peg_uv
+    return hole_uv, peg_uv, indices
 
 
 def _metrics_kabsch(
@@ -355,14 +430,20 @@ def _metrics_kabsch(
     hole_orn,
     depth_map: np.ndarray | None,
 ) -> AlignmentMetrics | None:
-    """Planar PnP on matched corners → peg pose relative to hole (6D)."""
+    """Parallelogram-inferred 4th corner (if any) + 4-point IPPE → peg 6D relative to hole."""
     del hole_orn, depth_map
-    matched = _matched_uv(hole_kp, peg_kp)
-    if matched is None:
+    hole_idx = _planar_pose_indices(hole_kp)
+    peg_idx = _planar_pose_indices(peg_kp)
+    if hole_idx is None or peg_idx is None:
         return None
-    hole_uv, peg_uv = matched
-    hole_pose = _solve_planar_pose(hole_uv, _rect_object_points(HOLE_HALF_X, HOLE_HALF_Y), cam)
-    peg_pose = _solve_planar_pose(peg_uv, _rect_object_points(PEG_W / 2.0, PEG_H / 2.0), cam)
+    hole_corners, hole_score = hole_idx
+    peg_corners, peg_score = peg_idx
+    hole_uv = [hole_kp.uv[i] for i in hole_corners]
+    peg_uv = [peg_kp.uv[i] for i in peg_corners]
+    hole_obj = _rect_object_points(HOLE_HALF_X, HOLE_HALF_Y)
+    peg_obj = _rect_object_points(PEG_W / 2.0, PEG_H / 2.0)
+    hole_pose = _solve_planar_pose(hole_uv, hole_obj, cam, hole_score)
+    peg_pose = _solve_planar_pose(peg_uv, peg_obj, cam, peg_score)
     if hole_pose is None or peg_pose is None:
         return None
     rot_h, trans_h = _cam_to_world(cam, *hole_pose)

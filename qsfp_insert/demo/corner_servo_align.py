@@ -25,14 +25,27 @@ def main() -> int:
         "--align-method",
         choices=("kabsch", "ibvs"),
         default=CORNER_ALIGN_METHOD,
-        help="6D error: kabsch (3D corner Procrustes) or ibvs (8-feature L+)",
+        help="6D error: kabsch (planar PnP) or ibvs",
+    )
+    ap.add_argument(
+        "--insert",
+        action="store_true",
+        help="After alignment, continue descending to insert",
+    )
+    ap.add_argument(
+        "--infer-corner0",
+        action="store_true",
+        help="Only corners 1–3 visible; infer corner 0 from known rectangle (magenta overlay)",
     )
     args = ap.parse_args()
     rng = random.Random(args.seed)
     hole_xy = sample_hole_xy(rng)
     opencv = args.gui
 
-    print(f"seed={args.seed} hole_xy={hole_xy} align_method={args.align_method}")
+    print(
+        f"seed={args.seed} hole_xy={hole_xy} align_method={args.align_method} "
+        f"insert={args.insert} infer_corner0={args.infer_corner0}"
+    )
     print("nominal pose: IK to standoff, then random 6D perturb, then corner servo")
     aligned, info, hole_xy, live = corner_servo_episode(
         gui=args.gui,
@@ -41,6 +54,8 @@ def main() -> int:
         rng=rng,
         gui_idle=args.gui,
         align_method=args.align_method,
+        insert=args.insert,
+        infer_corner0=args.infer_corner0,
     )
 
     if info is None:
@@ -63,9 +78,16 @@ def main() -> int:
     if info.get("gt_aligned") is False and aligned:
         print("warning: vision converged but GT still misaligned")
 
+    if args.insert:
+        inserted = info.get("inserted")
+        print("insert ok" if inserted else "insert fail")
+        ok = bool(aligned and inserted)
+    else:
+        ok = aligned
+
     if live is not None:
         corner_servo_gui_idle(*live)
-    return 0 if aligned else 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

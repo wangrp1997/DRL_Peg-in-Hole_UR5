@@ -31,6 +31,7 @@ from sim.scene import (
     load_scene,
     move_tip_to_standoff,
     refresh_camera_views,
+    run_insert_after_align,
     set_hole_opaque,
 )
 from vision.corner_servo import run_corner_servo
@@ -66,7 +67,9 @@ def corner_servo_episode(
     rng: random.Random | None = None,
     gui_idle: bool = False,
     align_method: AlignMethod | None = None,
-) -> tuple[bool, dict[str, Any] | None, tuple[float, float], tuple[int, int, int] | None]:
+    insert: bool = False,
+    infer_corner0: bool = False,
+) -> tuple[bool, dict[str, Any] | None, tuple[float, float], tuple | None]:
     connect(gui)
     robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(
         gui, hole_xy=hole_xy, opencv_render=opencv_render, fixed_cam=True
@@ -81,12 +84,14 @@ def corner_servo_episode(
         cam = get_fixed_camera()
         if cam is None:
             return None
-        return gt_image_keypoints(cam, robot_id, peg, hole_id)
+        return gt_image_keypoints(cam, robot_id, peg, hole_id, infer_corner0=infer_corner0)
 
     def _show_keypoints() -> None:
         if not gui:
             return
-        sync_gt_corner_markers(robot_id, peg, hole_id)
+        cam = get_fixed_camera()
+        kps = _provider()
+        sync_gt_corner_markers(robot_id, peg, hole_id, kps, cam)
         refresh_camera_views(_provider)
 
     move_tip_to_standoff(
@@ -111,7 +116,8 @@ def corner_servo_episode(
 
     def _on_step():
         if gui:
-            sync_gt_corner_markers(robot_id, peg, hole_id)
+            kps = _provider()
+            sync_gt_corner_markers(robot_id, peg, hole_id, kps, cam)
             refresh_camera_views(_provider)
 
     aligned, m = run_corner_servo(
@@ -127,10 +133,18 @@ def corner_servo_episode(
         align_method=align_method,
     )
 
+    inserted: bool | None = None
+    if insert and aligned:
+        inserted = run_insert_after_align(robot_id, arm, eef, peg, hole_xy, gui=gui)
+        if gui:
+            _show_keypoints()
+
     info: dict[str, Any] | None = None
     if m is not None:
         info = {
             "align_method": align_method or "kabsch",
+            "infer_corner0": infer_corner0,
+            "insert": insert,
             "dx_mm": round(m["dx"] * 1e3, 3),
             "dy_mm": round(m["dy"] * 1e3, 3),
             "standoff_mm": round(m["standoff"] * 1e3, 3),
@@ -149,30 +163,36 @@ def corner_servo_episode(
         info["gt_roll_deg"] = round(math.degrees(gt["roll"]), 3)
         info["gt_pitch_deg"] = round(math.degrees(gt["pitch"]), 3)
         info["gt_yaw_deg"] = round(math.degrees(gt["yaw"]), 3)
+        if insert:
+            info["inserted"] = inserted
 
+    live = None
     if gui and gui_idle:
-        return aligned, info, hole_xy, (robot_id, peg, hole_id)
+        live = (robot_id, peg, hole_id, infer_corner0)
 
-    if gui:
-        clear_gt_corner_markers()
-        close_camera_windows()
-    p.disconnect()
-    return aligned, info, hole_xy, None
+    if live is None:
+        if gui:
+            clear_gt_corner_markers()
+            close_camera_windows()
+        p.disconnect()
+
+    return aligned, info, hole_xy, live
 
 
-def corner_servo_gui_idle(robot_id: int, peg: int, hole_id: int) -> None:
+def corner_servo_gui_idle(robot_id: int, peg: int, hole_id: int, infer_corner0: bool = False) -> None:
     """Keep GUI + keypoint overlay until PyBullet window is closed."""
     cam = get_fixed_camera()
 
     def _provider():
         if cam is None:
             return None
-        return gt_image_keypoints(cam, robot_id, peg, hole_id)
+        return gt_image_keypoints(cam, robot_id, peg, hole_id, infer_corner0=infer_corner0)
 
     print("Close PyBullet window to exit.")
     while p.getConnectionInfo()["isConnected"]:
         p.stepSimulation()
-        sync_gt_corner_markers(robot_id, peg, hole_id)
+        kps = _provider()
+        sync_gt_corner_markers(robot_id, peg, hole_id, kps, cam)
         refresh_camera_views(_provider)
         time.sleep(1.0 / 240.0)
     clear_gt_corner_markers()

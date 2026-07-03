@@ -9,8 +9,8 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from constants import FIXTURE_CENTER_Z, PLATE_TOP_Z, REST_POSES, ROBOT_BASE_Z
-from geometry import peg_tip_world
+from constants import EE_LINEAR_STEP, FIXTURE_CENTER_Z, HOLE_DEPTH, PLATE_TOP_Z, REST_POSES, ROBOT_BASE_Z, UR5_MIN_INSERT_DEPTH
+from geometry import is_inserted, peg_tip_world
 from rlenv import PegInHoleGymEnv
 from sim._paths import URDF
 from sim.fixed_camera import FixedCamera, load_fixed_camera
@@ -119,6 +119,27 @@ def step_tip_z(robot_id, eef, arm, peg, hole_xy, ee_orn, dz: float, gui: bool = 
         ee_orn,
     )
     settle(10, gui)
+
+
+def run_insert_after_align(
+    robot_id: int,
+    arm: list[int],
+    eef: int,
+    peg: int,
+    hole_xy: tuple[float, float],
+    gui: bool = False,
+) -> bool:
+    """Descend along −Z after alignment until inserted or depth limit."""
+    ee_orn0 = p.getLinkState(robot_id, eef)[1]
+    for _ in range(800):
+        step_tip_z(robot_id, eef, arm, peg, hole_xy, ee_orn0, -EE_LINEAR_STEP, gui)
+        tip = peg_tip_world(robot_id, peg)
+        if is_inserted(tip, hole_xy, min_insert_depth=UR5_MIN_INSERT_DEPTH):
+            return True
+        if tip[2] < PLATE_TOP_Z - HOLE_DEPTH:
+            break
+    tip = peg_tip_world(robot_id, peg)
+    return is_inserted(tip, hole_xy, min_insert_depth=UR5_MIN_INSERT_DEPTH)
 
 
 def move_tip_to_standoff(

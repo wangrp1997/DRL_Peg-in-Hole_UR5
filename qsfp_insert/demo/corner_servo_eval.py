@@ -17,7 +17,14 @@ from constants import CORNER_ALIGN_METHOD, HOLE_X_RANGE, HOLE_Y_RANGE
 from vision.corner_servo_episode import corner_servo_episode, sample_hole_xy
 
 
-def run(episodes: int, seed: int, output_dir: str, align_method: str) -> dict:
+def run(
+    episodes: int,
+    seed: int,
+    output_dir: str,
+    align_method: str,
+    insert: bool,
+    infer_corner0: bool,
+) -> dict:
     rng = random.Random(seed)
     rows = []
     ok = 0
@@ -25,14 +32,24 @@ def run(episodes: int, seed: int, output_dir: str, align_method: str) -> dict:
     for ep in range(1, episodes + 1):
         hole_xy = sample_hole_xy(rng)
         aligned, info, _, _ = corner_servo_episode(
-            gui=False, hole_xy=hole_xy, rng=rng, align_method=align_method
+            gui=False,
+            hole_xy=hole_xy,
+            rng=rng,
+            align_method=align_method,
+            insert=insert,
+            infer_corner0=infer_corner0,
         )
-        success = bool(aligned and info and info.get("gt_aligned"))
+        if insert:
+            inserted = bool(info and info.get("inserted"))
+            success = bool(aligned and inserted)
+        else:
+            success = bool(aligned and info and info.get("gt_aligned"))
         ok += int(success)
         row = {
             "episode": ep,
             "hole_x": round(hole_xy[0], 4),
             "hole_y": round(hole_xy[1], 4),
+            "aligned": aligned,
             "success": success,
         }
         if info:
@@ -40,24 +57,33 @@ def run(episodes: int, seed: int, output_dir: str, align_method: str) -> dict:
             if info.get("perturb"):
                 row["perturb"] = info["perturb"]
         rows.append(row)
-        status = "align ok" if success else "align fail"
+        if insert:
+            inserted = bool(info and info.get("inserted"))
+            status = "insert ok" if success else f"align={'ok' if aligned else 'fail'} insert={'ok' if inserted else 'fail'}"
+        else:
+            status = "align ok" if success else "align fail"
         if info:
             print(
                 f"[{ep}/{episodes}] hole=({hole_xy[0]:.3f},{hole_xy[1]:.3f}) {status} "
                 f"dx={info['dx_mm']:+.2f}mm dy={info['dy_mm']:+.2f}mm standoff={info['standoff_mm']:.2f}mm "
                 f"gt_aligned={info.get('gt_aligned')}"
+                + (f" inserted={info.get('inserted')}" if insert else "")
             )
         else:
             print(f"[{ep}/{episodes}] hole=({hole_xy[0]:.3f},{hole_xy[1]:.3f}) {status} (no metrics)")
 
     rate = ok / episodes * 100
+    label = "insert" if insert else "align"
     summary = {
+        "mode": label,
         "episodes": episodes,
         "successes": ok,
         "failures": episodes - ok,
         "success_rate_pct": round(rate, 1),
         "seed": seed,
         "align_method": align_method,
+        "insert": insert,
+        "infer_corner0": infer_corner0,
         "hole_x_range": list(HOLE_X_RANGE),
         "hole_y_range": list(HOLE_Y_RANGE),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -82,7 +108,24 @@ if __name__ == "__main__":
         choices=("kabsch", "ibvs"),
         default=CORNER_ALIGN_METHOD,
     )
+    ap.add_argument(
+        "--insert",
+        action="store_true",
+        help="After alignment, continue descending to insert; count align+insert success",
+    )
+    ap.add_argument(
+        "--infer-corner0",
+        action="store_true",
+        help="Only corners 1–3 visible; infer corner 0 from parallelogram",
+    )
     ap.add_argument("--output-dir", default=os.path.join(REPO_ROOT, "outputs"))
     args = ap.parse_args()
-    summary = run(args.episodes, args.seed, args.output_dir, args.align_method)
+    summary = run(
+        args.episodes,
+        args.seed,
+        args.output_dir,
+        args.align_method,
+        args.insert,
+        args.infer_corner0,
+    )
     sys.exit(0 if summary["failures"] == 0 else 1)
