@@ -9,10 +9,13 @@ import pybullet as p
 
 from constants import (
     ALIGN_Z_NOMINAL,
+    ALIGN_Z_STANDOFF_MAX,
     CART_MAX_ANG,
     CART_MAX_LIN,
     CART_Z_GAIN,
     GUI_SERVO_REFRESH_EVERY,
+    IBVS_BLEND_PX,
+    IBVS_STALL_STEPS,
     PLATE_TOP_Z,
     SERVO_MAX_STEPS,
     SERVO_STALL_STEPS,
@@ -20,22 +23,27 @@ from constants import (
 from geometry import AlignmentMetrics, metrics_converged, peg_tip_world
 from sim.cartesian_control import alignment_twist, apply_cartesian_velocity, stop_arm
 from sim.fixed_camera import FixedCamera
-from vision.align import AlignMethod, ibvs_twist_tip, metrics_from_keypoints
+from vision.align import (
+    AlignMethod,
+    ibvs_pixel_error,
+    ibvs_twist_tip,
+    metrics_from_keypoints,
+)
 from vision.corners import ImageKeypoints, peg_tip_corners_world
 
 
 KeypointProvider = Callable[[], list[ImageKeypoints] | None]
 
 
-def _clip_twist(twist: np.ndarray) -> np.ndarray:
+def _clip_twist(twist: np.ndarray, max_ang: float = CART_MAX_ANG) -> np.ndarray:
     lin = twist[:3]
     ang = twist[3:]
     ln = np.linalg.norm(lin)
     if ln > CART_MAX_LIN:
         lin = lin * (CART_MAX_LIN / ln)
     an = np.linalg.norm(ang)
-    if an > CART_MAX_ANG:
-        ang = ang * (CART_MAX_ANG / an)
+    if an > max_ang:
+        ang = ang * (max_ang / an)
     return np.concatenate([lin, ang])
 
 
@@ -45,16 +53,31 @@ def _ibvs_control_twist(
     robot_id: int,
     peg: int,
     standoff: float,
+    metrics: AlignmentMetrics,
 ) -> np.ndarray | None:
+    """Far: PnP coarse (valid 6D); near: IBVS fine (ViSP eye-to-hand J_img)."""
     hole_kp = next(s for s in keypoints if s.name == "hole")
     peg_kp = next(s for s in keypoints if s.name == "peg")
     tip = peg_tip_world(robot_id, peg)
     corners = peg_tip_corners_world(robot_id, peg)
-    twist = ibvs_twist_tip(cam, hole_kp, peg_kp, corners, tip)
-    if twist is None:
-        return None
-    twist[2] = max(-CART_MAX_LIN, min(CART_MAX_LIN, CART_Z_GAIN * (ALIGN_Z_NOMINAL - standoff)))
-    return _clip_twist(twist)
+
+    tw_pnp = alignment_twist(
+        metrics["dx"], metrics["dy"], metrics["standoff"],
+        metrics["roll"], metrics["pitch"], metrics["yaw"],
+    )
+    px = ibvs_pixel_error(hole_kp, peg_kp)
+    ibvs_w = 0.0 if px is None else max(0.0, min(1.0, 1.0 - px / IBVS_BLEND_PX))
+
+    tw_ibvs = ibvs_twist_tip(cam, hole_kp, peg_kp, corners, tip)
+    if tw_ibvs is None:
+        twist = tw_pnp
+    else:
+        if standoff > ALIGN_Z_STANDOFF_MAX:
+            tw_ibvs[2] = -CART_MAX_LIN
+        else:
+            tw_ibvs[2] = max(-CART_MAX_LIN, min(CART_MAX_LIN, CART_Z_GAIN * (ALIGN_Z_NOMINAL - standoff)))
+        twist = ibvs_w * tw_ibvs + (1.0 - ibvs_w) * tw_pnp
+    return _clip_twist(twist, CART_MAX_ANG)
 
 
 def run_corner_servo(
@@ -71,9 +94,10 @@ def run_corner_servo(
 ) -> tuple[bool, AlignmentMetrics | None]:
     """Servo until corner metrics converge or stall/timeout."""
     stall = 0
-    prev_standoff = float("inf")
+    prev_px = float("inf")
     last_m: AlignmentMetrics | None = None
     use_ibvs = align_method == "ibvs"
+    stall_limit = IBVS_STALL_STEPS if use_ibvs else SERVO_STALL_STEPS
 
     for step in range(SERVO_MAX_STEPS):
         keypoints = keypoint_provider()
@@ -96,16 +120,24 @@ def run_corner_servo(
             if on_step is not None:
                 on_step()
             return True, m
-        if abs(m["standoff"] - prev_standoff) < 5e-6:
-            stall += 1
-            if stall >= SERVO_STALL_STEPS:
-                break
-        else:
-            stall = 0
-        prev_standoff = m["standoff"]
 
         if use_ibvs:
-            twist = _ibvs_control_twist(keypoints, cam, robot_id, peg, standoff_hint)
+            hole_kp = next(s for s in keypoints if s.name == "hole")
+            peg_kp = next(s for s in keypoints if s.name == "peg")
+            px = ibvs_pixel_error(hole_kp, peg_kp)
+            if px is not None and abs(px - prev_px) < 0.1:
+                stall += 1
+            else:
+                stall = 0
+            prev_px = px if px is not None else prev_px
+        else:
+            stall = 0
+
+        if stall >= stall_limit:
+            break
+
+        if use_ibvs:
+            twist = _ibvs_control_twist(keypoints, cam, robot_id, peg, standoff_hint, m)
             if twist is None:
                 break
         else:

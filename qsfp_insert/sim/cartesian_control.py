@@ -63,6 +63,19 @@ def alignment_twist(dx: float, dy: float, standoff: float, roll: float, pitch: f
     return np.array([vx, vy, vz, wx, wy, wz])
 
 
+def apply_joint_velocity(
+    robot_id: int,
+    arm: list[int],
+    qdot: np.ndarray,
+    force: float = 500.0,
+) -> None:
+    n = np.linalg.norm(qdot)
+    if n > CART_MAX_QDOT:
+        qdot = qdot * (CART_MAX_QDOT / n)
+    for j, v in zip(arm, qdot):
+        p.setJointMotorControl2(robot_id, j, p.VELOCITY_CONTROL, targetVelocity=float(v), force=force)
+
+
 def apply_cartesian_velocity(
     robot_id: int,
     peg_link: int,

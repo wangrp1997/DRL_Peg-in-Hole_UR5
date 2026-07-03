@@ -1,6 +1,7 @@
 """6-DOF alignment error from matched peg/hole image corners (geometric corner servo)."""
 from __future__ import annotations
 
+import itertools
 import math
 from typing import Literal
 
@@ -12,6 +13,8 @@ from constants import (
     CART_LAMBDA,
     CORNER_ALIGN_METHOD,
     CORNER_SERVO_STANDOFF,
+    IBVS_BLEND_PX,
+    IBVS_LAMBDA,
     IBVS_PIXEL_TOL,
     IBVS_TWIST_GAIN,
     MIN_CORNERS_VISIBLE,
@@ -174,25 +177,64 @@ def _interaction_matrix_point(cam: FixedCamera, u: float, v: float, z: float) ->
     return mat
 
 
-def ibvs_pixel_error(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> float | None:
-    """RMS pixel residual ||s_peg − s_hole|| over matched corners."""
-    sq = 0.0
-    n = 0
-    for i in range(4):
-        if not (hole_kp.visible[i] and peg_kp.visible[i]):
+def _corner_assignment(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> list[tuple[int, int]] | None:
+    """Best peg↔hole corner pairing (handles yaw ambiguity via 4! search)."""
+    best_pairs: list[tuple[int, int]] | None = None
+    best_cost = float("inf")
+    for perm in itertools.permutations(range(4)):
+        cost = 0.0
+        n = 0
+        for h, p in enumerate(perm):
+            if not (hole_kp.visible[h] and peg_kp.visible[p]):
+                continue
+            du = peg_kp.uv[p][0] - hole_kp.uv[h][0]
+            dv = peg_kp.uv[p][1] - hole_kp.uv[h][1]
+            cost += du * du + dv * dv
+            n += 1
+        if n < MIN_CORNERS_VISIBLE or cost >= best_cost:
             continue
-        du = peg_kp.uv[i][0] - hole_kp.uv[i][0]
-        dv = peg_kp.uv[i][1] - hole_kp.uv[i][1]
-        sq += du * du + dv * dv
-        n += 1
-    if n < MIN_CORNERS_VISIBLE:
+        best_cost = cost
+        best_pairs = [
+            (h, p)
+            for h, p in enumerate(perm)
+            if hole_kp.visible[h] and peg_kp.visible[p]
+        ]
+    return best_pairs
+
+
+def ibvs_pixel_error(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> float | None:
+    """RMS pixel residual ||s_peg − s_hole|| over best-matched corners."""
+    pairs = _corner_assignment(hole_kp, peg_kp)
+    if pairs is None:
         return None
-    return float(math.sqrt(sq / n))
+    sq = 0.0
+    for h, p in pairs:
+        du = peg_kp.uv[p][0] - hole_kp.uv[h][0]
+        dv = peg_kp.uv[p][1] - hole_kp.uv[h][1]
+        sq += du * du + dv * dv
+    return float(math.sqrt(sq / len(pairs)))
 
 
 def ibvs_pixels_converged(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> bool:
     err = ibvs_pixel_error(hole_kp, peg_kp)
     return err is not None and err <= IBVS_PIXEL_TOL
+
+
+def _ibvs_feature_error(hole_kp: ImageKeypoints, peg_kp: ImageKeypoints) -> np.ndarray | None:
+    pairs = _corner_assignment(hole_kp, peg_kp)
+    if pairs is None:
+        return None
+    err: list[float] = []
+    for h, p in pairs:
+        err.extend([peg_kp.uv[p][0] - hole_kp.uv[h][0], peg_kp.uv[p][1] - hole_kp.uv[h][1]])
+    return np.array(err, dtype=np.float64)
+
+
+def _hole_corner_cam_z(cam: FixedCamera, u: float, v: float) -> float | None:
+    pt = cam.world_point_on_plane(u, v, PLATE_TOP_Z)
+    if pt is None:
+        return None
+    return _corner_cam_z(cam, pt)
 
 
 def _damped_pinv(j: np.ndarray, lam: float = CART_LAMBDA) -> np.ndarray:
@@ -274,9 +316,13 @@ def _solve_planar_pose(
     object_pts: np.ndarray,
     cam: FixedCamera,
 ) -> tuple[np.ndarray, np.ndarray] | None:
+    if len(uv) < 3:
+        return None
     img = np.array(uv, dtype=np.float64)
+    obj = object_pts[: len(uv)] if len(uv) < 4 else object_pts
     dist = np.zeros(5, dtype=np.float64)
-    ok, rvec, tvec = cv2.solvePnP(object_pts, img, cam.K, dist, flags=cv2.SOLVEPNP_IPPE)
+    flag = cv2.SOLVEPNP_IPPE if len(uv) >= 4 else cv2.SOLVEPNP_SQPNP
+    ok, rvec, tvec = cv2.solvePnP(obj, img, cam.K, dist, flags=flag)
     if not ok:
         return None
     rot_c, _ = cv2.Rodrigues(rvec)
@@ -354,6 +400,78 @@ def _corner_cam_z(cam: FixedCamera, pt_world: tuple[float, float, float] | np.nd
     return z if z > 1e-6 else None
 
 
+def _hole_corner_cam_z(cam: FixedCamera, u: float, v: float) -> float | None:
+    pt = cam.world_point_on_plane(u, v, PLATE_TOP_Z)
+    if pt is None:
+        return None
+    return _corner_cam_z(cam, pt)
+
+
+def _ibvs_image_jacobian(
+    cam: FixedCamera,
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+    peg_corners_world: list[tuple[float, float, float]],
+    tip_world: tuple[float, float, float],
+    depth_map: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Eye-to-hand J_img (2k×6): L at peg corners, matched peg↔hole via _corner_assignment."""
+    pairs = _corner_assignment(hole_kp, peg_kp)
+    e = _ibvs_feature_error(hole_kp, peg_kp)
+    if pairs is None or e is None:
+        return None
+
+    r_cw = _cam_rot_world_to_cam(cam)
+    tip = np.array(tip_world, dtype=np.float64)
+    j_rows: list[np.ndarray] = []
+
+    for h, p in pairs:
+        pu, pv = peg_kp.uv[p]
+        z = _corner_cam_z(cam, peg_corners_world[p])
+        if z is None and depth_map is not None:
+            z = _depth_cam_z(cam, depth_map, pu, pv)
+        if z is None or z <= 1e-6:
+            return None
+
+        r = np.array(peg_corners_world[p], dtype=np.float64) - tip
+        l_i = _interaction_matrix_point(cam, pu, pv, z)
+        m_i = _ee_to_cam_point_jacobian(r_cw, r)
+        j_rows.append(l_i @ m_i)
+
+    if len(j_rows) < MIN_CORNERS_VISIBLE:
+        return None
+    return np.vstack(j_rows), e
+
+
+def ibvs_joint_velocities(
+    robot_id: int,
+    peg_link: int,
+    arm: list[int],
+    cam: FixedCamera,
+    hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
+    peg_corners_world: list[tuple[float, float, float]],
+    tip_world: tuple[float, float, float],
+    depth_map: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """q̇ = λ (J_img J_robot⁺)⁺ (−e); eye-to-hand IBVS in joint space (ViSP-style chain)."""
+    from sim.cartesian_control import damped_pinv, jacobian_tip
+
+    built = _ibvs_image_jacobian(cam, hole_kp, peg_kp, peg_corners_world, tip_world, depth_map)
+    if built is None:
+        return None
+    j_img, e = built
+
+    px = ibvs_pixel_error(hole_kp, peg_kp)
+    if px is None:
+        return None
+    gain = IBVS_TWIST_GAIN * min(1.0, IBVS_BLEND_PX / max(px, 1.0))
+
+    j_robot = jacobian_tip(robot_id, peg_link, arm)
+    j_full = j_img @ damped_pinv(j_robot, IBVS_LAMBDA)
+    return gain * damped_pinv(j_full, IBVS_LAMBDA) @ (-e)
+
+
 def ibvs_twist_tip(
     cam: FixedCamera,
     hole_kp: ImageKeypoints,
@@ -362,36 +480,16 @@ def ibvs_twist_tip(
     tip_world: tuple[float, float, float],
     depth_map: np.ndarray | None = None,
 ) -> np.ndarray | None:
-    """Eye-to-hand IBVS: v_tip = λ J_ee+ (−e). Sim: GT corner Z; real: optional depth_map."""
-    r_cw = _cam_rot_world_to_cam(cam)
-    tip = np.array(tip_world, dtype=np.float64)
-    j_rows: list[np.ndarray] = []
-    err: list[float] = []
-
-    for i in range(4):
-        if not (hole_kp.visible[i] and peg_kp.visible[i]):
-            continue
-        pu, pv = peg_kp.uv[i]
-        hu, hv = hole_kp.uv[i]
-        err.extend([pu - hu, pv - hv])
-
-        z = _corner_cam_z(cam, peg_corners_world[i])
-        if z is None and depth_map is not None:
-            z = _depth_cam_z(cam, depth_map, pu, pv)
-        if z is None or z <= 1e-6:
-            return None
-
-        r = np.array(peg_corners_world[i], dtype=np.float64) - tip
-        l_i = _interaction_matrix_point(cam, pu, pv, z)
-        m_i = _ee_to_cam_point_jacobian(r_cw, r)
-        j_rows.append(l_i @ m_i)
-
-    if len(j_rows) < MIN_CORNERS_VISIBLE:
+    """Legacy Cartesian IBVS (superseded by ibvs_joint_velocities in the servo loop)."""
+    built = _ibvs_image_jacobian(cam, hole_kp, peg_kp, peg_corners_world, tip_world, depth_map)
+    if built is None:
         return None
-
-    j_mat = np.vstack(j_rows)
-    e = np.array(err, dtype=np.float64)
-    return IBVS_TWIST_GAIN * (_damped_pinv(j_mat) @ (-e))
+    j_img, e = built
+    px = ibvs_pixel_error(hole_kp, peg_kp)
+    if px is None:
+        return None
+    gain = IBVS_TWIST_GAIN
+    return gain * _damped_pinv(j_img, IBVS_LAMBDA) @ (-e)
 
 
 def _cam_depth(pt_cam: np.ndarray) -> float:

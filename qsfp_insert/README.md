@@ -27,7 +27,7 @@ python qsfp_insert/demo/corner_servo_eval.py --episodes 10 --seed 42 [--align-me
 ```
 
 `--align-method kabsch`（默认）：匹配角点 + 已知孔/轴矩形尺寸做 **planar PnP**，得完整 6D 误差。  
-`--align-method ibvs`：8 像素特征 + 交互矩阵 \(L^+\) 直接发 twist（仿真用 GT 角点 3D 算 \(Z\)，真机可传深度图）。
+`--align-method ibvs`：眼在手外 IBVS（\(J_{img}\) + GT 角点 \(Z\)）；远距 PnP 粗调、近距 IBVS 精调。
 
 初始位姿与 `fixed_camera_demo` 相同，用 **IK 一步到位**（`move_tip_to_standoff`）；扰动与对准阶段才走笛卡尔速度伺服。
 
