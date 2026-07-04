@@ -26,7 +26,7 @@ from geometry import AlignmentMetrics, metrics_converged, rpy_error
 from sim.fixed_camera import FixedCamera
 from vision.corners import HOLE_HALF_X, HOLE_HALF_Y, ImageKeypoints
 
-AlignMethod = Literal["kabsch", "ibvs"]
+AlignMethod = Literal["kabsch", "ibvs", "dvs"]
 
 
 def _set_by_name(sets: list[ImageKeypoints]) -> tuple[ImageKeypoints, ImageKeypoints]:

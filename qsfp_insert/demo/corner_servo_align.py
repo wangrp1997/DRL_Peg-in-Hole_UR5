@@ -23,9 +23,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--align-method",
-        choices=("kabsch", "ibvs"),
+        choices=("kabsch", "ibvs", "dvs"),
         default=CORNER_ALIGN_METHOD,
-        help="6D error: kabsch (planar PnP) or ibvs",
+        help="6D error: kabsch (planar PnP), ibvs (corner pixels), dvs (teach target image SSD)",
     )
     ap.add_argument(
         "--insert",

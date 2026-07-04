@@ -14,6 +14,7 @@ from geometry import is_inserted, peg_tip_world
 from rlenv import PegInHoleGymEnv
 from sim._paths import URDF
 from sim.fixed_camera import FixedCamera, load_fixed_camera
+from sim.wrist_camera import WristCamera
 
 _rlenv_cam = PegInHoleGymEnv.__new__(PegInHoleGymEnv)
 _rlenv_cam.image_width = 100
@@ -21,14 +22,19 @@ _rlenv_cam.image_height = 100
 
 _WRIST_WINDOW = "wrist_camera (RGB | Depth | Seg)"
 _FIXED_WINDOW = "fixed_camera (RGB | Depth | Seg)"
+_WRIST2_WINDOW = "wrist_camera2 (RGB | Depth | Seg)"
 
 _wrist_cam: int | None = None
+_wrist_camera: WristCamera | None = None
+_wrist_camera2 = None  # WristCamera2 | None
 _gui_robot_id: int | None = None
 _fixed_cam: FixedCamera | None = None
 _wrist_opencv = False
 _fixed_opencv = False
 _gui_wrist = False  # PyBullet corner previews (HARDWARE_OPENGL) — only one per frame
 _gui_fixed = False
+_gui_wrist2 = False
+_wrist2_opencv = False
 
 
 def urdf(name: str) -> str:
@@ -70,7 +76,29 @@ def _set_gui_corner_previews(on: bool) -> None:
 
 
 def _cam_views_active() -> bool:
-    return _gui_wrist or _gui_fixed or _wrist_opencv or _fixed_opencv
+    return _gui_wrist or _gui_fixed or _gui_wrist2 or _wrist_opencv or _fixed_opencv or _wrist2_opencv
+
+
+def register_wrist_camera2(cam) -> None:
+    """Register DVS wrist_camera2 body (after attach_wrist_camera2)."""
+    global _wrist_camera2
+    _wrist_camera2 = cam
+
+
+def get_wrist_camera2():
+    return _wrist_camera2
+
+
+def setup_wrist_camera2_views(gui: bool, opencv_render: bool) -> None:
+    """Enable PyBullet corner previews and/or OpenCV panel for wrist_camera2."""
+    global _gui_wrist2, _wrist2_opencv
+    _gui_wrist2 = gui and _wrist_camera2 is not None
+    _wrist2_opencv = gui and opencv_render and _wrist_camera2 is not None
+    if _gui_wrist2 or _wrist2_opencv:
+        _set_gui_corner_previews(True)
+    if _wrist2_opencv and _wrist_camera2 is not None:
+        w, h = _wrist_camera2.width, _wrist_camera2.height
+        _open_preview_window(_WRIST2_WINDOW, w * 3 + 24, h + 8, 820, 0)
 
 
 def connect(gui: bool) -> None:
@@ -197,7 +225,7 @@ def load_scene(
     fixed_cam: bool = False,
 ):
     """Return robot_id, arm, eef_idx, peg_idx, hole_id, hole_xy."""
-    global _wrist_cam, _gui_robot_id, _fixed_cam, _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed
+    global _wrist_cam, _wrist_camera, _gui_robot_id, _fixed_cam, _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed
     _wrist_opencv = gui and opencv_render and wrist_cam
     _fixed_opencv = gui and opencv_render and fixed_cam
     _gui_wrist = gui and wrist_cam
@@ -226,20 +254,27 @@ def load_scene(
     else:
         _fixed_cam = None
 
+    if wrist_cam:
+        cam_link = link_index(robot_id, "camera_link")
+        _wrist_cam = cam_link
+        _wrist_camera = WristCamera(robot_id=robot_id, link_index=cam_link)
+    else:
+        _wrist_cam = None
+        _wrist_camera = None
+
     if gui:
         p.changeVisualShape(hole_id, -1, rgbaColor=[0.55, 0.55, 0.55, 0.25])
         p.resetDebugVisualizerCamera(1.2, 110, -40, [0.5, 0, 0.6])
         _set_gui_corner_previews(wrist_cam or fixed_cam)
         _gui_robot_id = robot_id
-        _wrist_cam = link_index(robot_id, "camera_link") if wrist_cam else None
-        if _wrist_opencv:
-            _open_preview_window(_WRIST_WINDOW, _rlenv_cam.image_width * 3 + 24, _rlenv_cam.image_height + 8, 820, 0)
+        if _wrist_opencv and _wrist_camera is not None:
+            w, h = _wrist_camera.width, _wrist_camera.height
+            _open_preview_window(_WRIST_WINDOW, w * 3 + 24, h + 8, 820, 0)
         if _fixed_opencv and _fixed_cam is not None:
             _open_preview_window(_FIXED_WINDOW, _fixed_cam.width * 3 + 24, _fixed_cam.height + 8, 820, 520)
         if _cam_views_active():
             refresh_camera_views()
     else:
-        _wrist_cam = None
         _gui_robot_id = None
 
     return robot_id, arm, eef, peg, hole_id, hole_xy
@@ -287,7 +322,11 @@ def _label(img: np.ndarray, text: str) -> np.ndarray:
 def _show_panel(window: str, rgba, depth, seg, keypoint_sets=None) -> None:
     import cv2
 
-    bgr = cv2.cvtColor(rgba[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+    # PyBullet RGBA → BGR; ignore alpha (TINY/HARDWARE mix caused black flicker if mishandled)
+    rgb = np.ascontiguousarray(rgba[..., :3])
+    if rgb.dtype != np.uint8:
+        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     if keypoint_sets:
         from vision.overlay import draw_keypoints_on_bgr
 
@@ -304,33 +343,14 @@ def _show_panel(window: str, rgba, depth, seg, keypoint_sets=None) -> None:
 
 
 def _render_wrist_cam(with_depth_seg: bool, for_opencv: bool):
-    """Wrist camera render. for_opencv=True → TINY_RENDERER (does not touch GUI corner buffers)."""
-    link_state = p.getLinkState(_gui_robot_id, _wrist_cam, computeForwardKinematics=True)
-    link_pos = link_state[0]
-    link_ori = link_state[1]
-    rot = p.getMatrixFromQuaternion(link_ori)
-    forward = [-rot[2], -rot[5], -rot[8]]
-    up = [rot[0], rot[3], rot[6]]
-    cam_eye = link_pos
-    cam_target = [cam_eye[0] + forward[0] * 0.2, cam_eye[1] + forward[1] * 0.2, cam_eye[2] + forward[2] * 0.2]
-    view = p.computeViewMatrix(cam_eye, cam_target, up)
-    proj = p.computeProjectionMatrixFOV(
-        fov=60,
-        aspect=_rlenv_cam.image_width / _rlenv_cam.image_height,
-        nearVal=0.01,
-        farVal=3.0,
-    )
-    renderer = p.ER_TINY_RENDERER if for_opencv else p.ER_BULLET_HARDWARE_OPENGL
-    kwargs = dict(viewMatrix=view, projectionMatrix=proj, renderer=renderer)
-    if with_depth_seg:
-        kwargs["flags"] = p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX
-    w, h, rgba, depth, seg = p.getCameraImage(_rlenv_cam.image_width, _rlenv_cam.image_height, **kwargs)
-    rgba_img = np.reshape(rgba, (h, w, 4))
-    if not with_depth_seg:
-        return rgba_img
-    depth_buf = np.reshape(depth, (h, w)).astype(np.float32)
-    seg_buf = np.reshape(seg, (h, w)).astype(np.int32)
-    return rgba_img, depth_buf, seg_buf
+    """Wrist camera render via WristCamera (640×480, same as fixed_cam)."""
+    if _wrist_camera is None:
+        raise RuntimeError("wrist camera not initialized")
+    return _wrist_camera.render(with_depth_seg, for_opencv=for_opencv)
+
+
+def get_wrist_camera() -> WristCamera | None:
+    return _wrist_camera
 
 
 def get_fixed_camera() -> FixedCamera | None:
@@ -346,11 +366,21 @@ def refresh_camera_views(get_keypoint_sets=None) -> None:
     """GUI corner: one HARDWARE_OPENGL render. OpenCV reuses that frame when available."""
     wrist_buf = None
     fixed_buf = None
+    wrist2_buf = None
 
-    if _gui_wrist and _wrist_cam is not None and _gui_robot_id is not None:
+    if _gui_wrist2 and _wrist_camera2 is not None:
+        wrist2_buf = _wrist_camera2.render(True, for_opencv=False)
+    elif _gui_wrist and _wrist_cam is not None and _gui_robot_id is not None:
         wrist_buf = _render_wrist_cam(True, for_opencv=False)
     elif _gui_fixed and _fixed_cam is not None:
         fixed_buf = _fixed_cam.render(True, for_opencv=False)
+
+    if _wrist2_opencv:
+        sets = get_keypoint_sets() if get_keypoint_sets is not None else None
+        if wrist2_buf is not None:
+            _show_panel(_WRIST2_WINDOW, *wrist2_buf, sets)
+        elif _wrist_camera2 is not None:
+            _show_panel(_WRIST2_WINDOW, *_wrist_camera2.render(True, for_opencv=True), sets)
 
     if _wrist_opencv:
         if wrist_buf is not None:
@@ -367,21 +397,26 @@ def refresh_camera_views(get_keypoint_sets=None) -> None:
 
 
 def close_camera_windows() -> None:
-    global _wrist_cam, _gui_robot_id, _fixed_cam, _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed
+    global _wrist_cam, _wrist_camera, _wrist_camera2, _gui_robot_id, _fixed_cam
+    global _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed, _gui_wrist2, _wrist2_opencv
     import cv2
 
-    for name in (_WRIST_WINDOW, _FIXED_WINDOW):
+    for name in (_WRIST_WINDOW, _FIXED_WINDOW, _WRIST2_WINDOW):
         try:
             cv2.destroyWindow(name)
         except cv2.error:
             pass
     _wrist_cam = None
+    _wrist_camera = None
+    _wrist_camera2 = None
     _gui_robot_id = None
     _fixed_cam = None
     _wrist_opencv = False
     _fixed_opencv = False
     _gui_wrist = False
     _gui_fixed = False
+    _gui_wrist2 = False
+    _wrist2_opencv = False
 
 
 def settle(steps: int = 10, gui: bool = False) -> None:
