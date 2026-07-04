@@ -35,6 +35,18 @@ _gui_wrist = False  # PyBullet corner previews (HARDWARE_OPENGL) — only one pe
 _gui_fixed = False
 _gui_wrist2 = False
 _wrist2_opencv = False
+_wrist2_last_rgba = None
+
+
+def _rgba_is_blank(rgba: np.ndarray) -> bool:
+    rgb = rgba[..., :3]
+    return float(rgb.max()) < 1.0
+
+
+def _render_wrist_camera2(with_depth_seg: bool, for_opencv: bool):
+    if _wrist_camera2 is None:
+        raise RuntimeError("wrist_camera2 not initialized")
+    return _wrist_camera2.render(with_depth_seg, for_opencv=for_opencv)
 
 
 def urdf(name: str) -> str:
@@ -54,18 +66,34 @@ def arm_joints(robot_id: int) -> list[int]:
 
 def add_gui_camera_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--gui", action="store_true", help="PyBullet 3D window only")
-    ap.add_argument("--opencv_render", action="store_true", help="OpenCV RGB|Depth|Seg panel(s); requires --wrist_cam and/or --fixed_cam")
-    ap.add_argument("--wrist_cam", action="store_true", help="Wrist camera: GUI corner previews; + OpenCV if --opencv_render")
+    ap.add_argument(
+        "--opencv_render",
+        action="store_true",
+        help="OpenCV RGB|Depth|Seg panel(s); requires --gui and a camera flag",
+    )
+    ap.add_argument(
+        "--wrist_cam",
+        action="store_true",
+        help="Legacy wrist camera on camera_link: GUI corner previews; + OpenCV if --opencv_render",
+    )
+    ap.add_argument(
+        "--wrist_cam2",
+        action="store_true",
+        help="DVS wrist_camera2 on ee_link: GUI corner previews; + OpenCV if --opencv_render",
+    )
     ap.add_argument("--fixed_cam", action="store_true", help="Fixed camera URDF: GUI corner previews; + OpenCV if --opencv_render")
 
 
 def validate_gui_camera_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    save_target = bool(getattr(args, "save_target", False))
     if args.opencv_render and not args.gui:
         ap.error("--opencv_render requires --gui")
-    if args.opencv_render and not args.wrist_cam and not args.fixed_cam:
-        ap.error("--opencv_render requires --wrist_cam and/or --fixed_cam")
-    if (args.wrist_cam or args.fixed_cam) and not args.gui:
-        ap.error("--wrist_cam and --fixed_cam require --gui")
+    if args.opencv_render and not args.wrist_cam and not args.fixed_cam and not args.wrist_cam2 and not save_target:
+        ap.error("--opencv_render requires --wrist_cam, --wrist_cam2, --fixed_cam, or --save_target")
+    if (args.wrist_cam or args.fixed_cam or args.wrist_cam2) and not args.gui:
+        ap.error("--wrist_cam, --wrist_cam2 and --fixed_cam require --gui")
+    if args.wrist_cam and args.wrist_cam2:
+        ap.error("--wrist_cam and --wrist_cam2 are mutually exclusive")
 
 
 def _set_gui_corner_previews(on: bool) -> None:
@@ -90,7 +118,7 @@ def get_wrist_camera2():
 
 
 def setup_wrist_camera2_views(gui: bool, opencv_render: bool) -> None:
-    """Enable PyBullet corner previews and/or OpenCV panel for wrist_camera2."""
+    """OpenCV panel + PyBullet corner previews (same pattern as --wrist_cam)."""
     global _gui_wrist2, _wrist2_opencv
     _gui_wrist2 = gui and _wrist_camera2 is not None
     _wrist2_opencv = gui and opencv_render and _wrist_camera2 is not None
@@ -363,13 +391,14 @@ def show_fixed_camera_panel(get_keypoint_sets=None) -> None:
 
 
 def refresh_camera_views(get_keypoint_sets=None) -> None:
-    """GUI corner: one HARDWARE_OPENGL render. OpenCV reuses that frame when available."""
+    """One HARDWARE render per active cam; OpenCV reuses that buffer (fixed_cam pattern)."""
+    global _wrist2_last_rgba
+    wrist2_buf = None
     wrist_buf = None
     fixed_buf = None
-    wrist2_buf = None
 
     if _gui_wrist2 and _wrist_camera2 is not None:
-        wrist2_buf = _wrist_camera2.render(True, for_opencv=False)
+        wrist2_buf = _render_wrist_camera2(True, for_opencv=False)
     elif _gui_wrist and _wrist_cam is not None and _gui_robot_id is not None:
         wrist_buf = _render_wrist_cam(True, for_opencv=False)
     elif _gui_fixed and _fixed_cam is not None:
@@ -378,9 +407,17 @@ def refresh_camera_views(get_keypoint_sets=None) -> None:
     if _wrist2_opencv:
         sets = get_keypoint_sets() if get_keypoint_sets is not None else None
         if wrist2_buf is not None:
-            _show_panel(_WRIST2_WINDOW, *wrist2_buf, sets)
+            rgba, depth, seg = wrist2_buf
         elif _wrist_camera2 is not None:
-            _show_panel(_WRIST2_WINDOW, *_wrist_camera2.render(True, for_opencv=True), sets)
+            rgba, depth, seg = _render_wrist_camera2(True, for_opencv=False)
+        else:
+            rgba = depth = seg = None
+        if rgba is not None and not _rgba_is_blank(rgba):
+            _wrist2_last_rgba = (rgba, depth, seg)
+        elif _wrist2_last_rgba is not None:
+            rgba, depth, seg = _wrist2_last_rgba
+        if rgba is not None:
+            _show_panel(_WRIST2_WINDOW, rgba, depth, seg, sets)
 
     if _wrist_opencv:
         if wrist_buf is not None:
@@ -398,7 +435,7 @@ def refresh_camera_views(get_keypoint_sets=None) -> None:
 
 def close_camera_windows() -> None:
     global _wrist_cam, _wrist_camera, _wrist_camera2, _gui_robot_id, _fixed_cam
-    global _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed, _gui_wrist2, _wrist2_opencv
+    global _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed, _gui_wrist2, _wrist2_opencv, _wrist2_last_rgba
     import cv2
 
     for name in (_WRIST_WINDOW, _FIXED_WINDOW, _WRIST2_WINDOW):
@@ -417,6 +454,7 @@ def close_camera_windows() -> None:
     _gui_fixed = False
     _gui_wrist2 = False
     _wrist2_opencv = False
+    _wrist2_last_rgba = None
 
 
 def settle(steps: int = 10, gui: bool = False) -> None:

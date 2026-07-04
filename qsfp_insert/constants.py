@@ -27,10 +27,11 @@ EE_LINEAR_STEP = 0.002
 CART_XY_GAIN = 2.0
 CART_Z_GAIN = 2.0
 CART_ROT_GAIN = 3.0
-CART_MAX_LIN = 0.02
-CART_MAX_ANG = 0.8
-CART_MAX_QDOT = 1.5
+CART_MAX_LIN = 0.05
+CART_MAX_ANG = 1.2
+CART_MAX_QDOT = 3.0
 CART_LAMBDA = 0.08
+SERVO_GUI_SUBSTEPS = 8  # physics steps per GUI frame (servo_align)
 SERVO_STALL_STEPS = 480  # ~2 s @ 240 Hz with no standoff progress
 SERVO_MAX_STEPS = 28800  # ~120 s safety cap only
 
@@ -55,6 +56,11 @@ FIXED_CAM_UP = (0.0, 0.0, 1.0)
 FIXED_CAM_ROLL_DEG = 90.0
 # fixed_camera_demo: peg tip standoff above hole mouth ( > ALIGN_Z_STANDOFF_MAX, < rest pose ).
 FIXED_CAM_DEMO_STANDOFF = 0.035
+
+# wrist_camera2: fixed bracket on ee_link; at aligned pose world pose ≈ fixed_cam (eye_for_hole).
+# Calibrated once at Cartesian align for default rest hole_xy.
+WRIST_CAM2_EE_LOCAL_POS = (0.001873, 0.059977, 0.099962)
+WRIST_CAM2_EE_LOCAL_ORN = (-0.194065, 0.261487, 0.943974, -0.053638)
 
 # corner_servo_align: IK to this standoff, then random 6D perturbation, then keypoint servo
 CORNER_SERVO_STANDOFF = FIXED_CAM_DEMO_STANDOFF

@@ -32,7 +32,7 @@ def run(episodes: int, seed: int | None, output_dir: str, insert: bool) -> dict:
 
     for ep in range(1, episodes + 1):
         hole_xy = _sample_hole_xy(rng)
-        aligned, inserted, m, _ = servo_align_episode(gui=False, hole_xy=hole_xy, insert=insert)
+        aligned, inserted, m, _, _ = servo_align_episode(gui=False, hole_xy=hole_xy, insert=insert)
         p.disconnect()
         success = bool(inserted) if insert else aligned
         ok_count += int(success)

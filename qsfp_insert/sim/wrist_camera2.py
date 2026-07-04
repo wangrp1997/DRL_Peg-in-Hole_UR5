@@ -1,4 +1,4 @@
-"""Eye-in-hand wrist_camera2: mounted on ee_link, standoff pose matches fixed_cam view."""
+"""Eye-in-hand wrist_camera2: fixed_cam view on ee_link bracket (moves with wrist)."""
 from __future__ import annotations
 
 import math
@@ -14,7 +14,8 @@ from constants import (
     FIXED_CAM_HEIGHT,
     FIXED_CAM_NEAR,
     FIXED_CAM_WIDTH,
-    PLATE_TOP_Z,
+    WRIST_CAM2_EE_LOCAL_ORN,
+    WRIST_CAM2_EE_LOCAL_POS,
 )
 from sim._paths import URDF
 from sim.fixed_camera import (
@@ -29,7 +30,7 @@ from sim.fixed_camera import (
 
 @dataclass(frozen=True)
 class WristCamera2:
-    """640×480 camera body fixed to ee_link; at attach time world pose = fixed_cam."""
+    """640×480 on ee_link; body-fixed optical axis; at align pose ≈ fixed_cam view."""
 
     body_id: int
     robot_id: int
@@ -53,10 +54,16 @@ class WristCamera2:
         return p.getBasePositionAndOrientation(self.body_id)
 
     def _view_projection(self) -> tuple[list[float], list[float]]:
+        """Eye-in-hand: look along body −Z (+X up); peg/camera rigid on ee."""
         link_pos, link_ori = self._pose()
         rot = p.getMatrixFromQuaternion(link_ori)
+        forward = [-rot[2], -rot[5], -rot[8]]
         up = [rot[0], rot[3], rot[6]]
-        target = list(target_for_hole(self.hole_xy))
+        target = [
+            link_pos[0] + forward[0] * 0.2,
+            link_pos[1] + forward[1] * 0.2,
+            link_pos[2] + forward[2] * 0.2,
+        ]
         view = p.computeViewMatrix(link_pos, target, up)
         proj = p.computeProjectionMatrixFOV(
             fov=self.fov,
@@ -112,15 +119,15 @@ def attach_wrist_camera2(
     ee_link: int,
     hole_xy: tuple[float, float],
 ) -> WristCamera2:
-    """After IK standoff: fix wrist_camera2 on ee_link so world pose matches fixed_cam."""
-    eye_w = eye_for_hole(hole_xy)
-    orn_w = camera_orientation(eye_w, target_for_hole(hole_xy))
+    """Rigid bracket on ee_link: aligned pose ≈ fixed_cam; moves with wrist when perturbed."""
+    local_pos = list(WRIST_CAM2_EE_LOCAL_POS)
+    local_orn = list(WRIST_CAM2_EE_LOCAL_ORN)
+
     ee_pos, ee_orn = p.getLinkState(robot_id, ee_link, computeForwardKinematics=True)[:2]
-    inv_pos, inv_orn = p.invertTransform(ee_pos, ee_orn)
-    local_pos, local_orn = p.multiplyTransforms(inv_pos, inv_orn, eye_w, orn_w)
+    cam_pos, cam_orn = p.multiplyTransforms(ee_pos, ee_orn, local_pos, local_orn)
 
     urdf_path = os.path.join(URDF, "wrist_camera2.urdf")
-    body_id = p.loadURDF(urdf_path, eye_w, orn_w, useFixedBase=False)
+    body_id = p.loadURDF(urdf_path, cam_pos, cam_orn, useFixedBase=False)
     cid = p.createConstraint(
         parentBodyUniqueId=robot_id,
         parentLinkIndex=ee_link,
@@ -134,8 +141,6 @@ def attach_wrist_camera2(
         childFrameOrientation=[0.0, 0.0, 0.0, 1.0],
     )
     p.changeConstraint(cid, maxForce=1e6)
-    for _ in range(10):
-        p.stepSimulation()
 
     return WristCamera2(
         body_id=body_id,
@@ -144,3 +149,10 @@ def attach_wrist_camera2(
         hole_xy=hole_xy,
         constraint_id=cid,
     )
+
+
+def fixed_cam_pose_at_aligned(hole_xy: tuple[float, float]) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """Reference fixed_cam world pose (for debug / comparison)."""
+    eye = eye_for_hole(hole_xy)
+    target = target_for_hole(hole_xy)
+    return eye, camera_orientation(eye, target)

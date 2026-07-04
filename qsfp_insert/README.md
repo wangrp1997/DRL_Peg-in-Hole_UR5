@@ -6,15 +6,19 @@ QSFP-DD 方孔 + 矩形轴，PyBullet 物理验证（独立于 `rlenv.py`）。
 
 ```bash
 python qsfp_insert/demo/servo_align.py --gui
-python qsfp_insert/demo/servo_align.py --gui --wrist_cam [--opencv_render] [--insert]
+python qsfp_insert/demo/servo_align.py --gui --wrist_cam2 [--opencv_render] [--insert] [--save_target]
+python qsfp_insert/demo/servo_align.py --gui --wrist_cam [--opencv_render] [--insert]   # 旧 camera_link 腕部相机
 python qsfp_insert/demo/servo_align.py --gui --fixed_cam [--opencv_render] [--insert]
+python qsfp_insert/demo/servo_align.py --save_target   # 无 GUI，对准后 wrist_camera2 存 I*
 python qsfp_insert/demo/ur5_insert.py --gui [--wrist_cam] [--fixed_cam] [--opencv_render]
+# 眼在手外demo
 python qsfp_insert/demo/fixed_camera_demo.py --gui [--seed 42] [--draw_keypoints] [--align]
+# 眼在手demo
 python qsfp_insert/demo/wrist_camera_demo.py --gui [--seed 42] [--draw_keypoints] [--move]
 python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 [--insert]
 ```
 
-参数：`--gui` 仅 3D；`--wrist_cam` / `--fixed_cam` 开对应 GUI 角预览（须 `--gui`）；`--opencv_render` 再开 OpenCV 横排窗（须指定相机）；`--insert` 对准后下插。
+参数：`--gui` 仅 3D；`--wrist_cam2` **DVS 眼在手上相机**（挂 `ee_link`，对准位视角 ≈ fixed_cam，随腕运动）；`--wrist_cam` 为 URDF 侧向 `camera_link`；`--fixed_cam` 眼在手外；以上预览须 `--gui`；`--opencv_render` 再开 OpenCV 横排窗；`--insert` 对准后下插；`--save_target` 对准成功后用 **wrist_camera2** 抓 640×480 灰度 PNG（+ JSON）到 `teach/dvs_targets/`。
 
 对准容差见 `constants.py`。
 

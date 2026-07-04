@@ -13,6 +13,8 @@ env/
 
 # Local run artifacts
 outputs/
+qsfp_insert/teach/dvs_targets/*
+!qsfp_insert/teach/dvs_targets/.gitkeep
 # IDE / OS
 .idea/
 .vscode/

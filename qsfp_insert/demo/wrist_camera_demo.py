@@ -14,7 +14,6 @@ from _paths import ROOT  # noqa: F401
 
 from constants import FIXED_CAM_DEMO_STANDOFF, HOLE_X_RANGE, HOLE_Y_RANGE, PLATE_TOP_Z
 from geometry import alignment_metrics, peg_tip_world
-from sim.fixed_camera import eye_for_hole, target_for_hole
 from sim.scene import (
     close_camera_windows,
     connect,
@@ -27,7 +26,7 @@ from sim.scene import (
     register_wrist_camera2,
     setup_wrist_camera2_views,
 )
-from sim.wrist_camera2 import attach_wrist_camera2
+from sim.wrist_camera2 import attach_wrist_camera2, fixed_cam_pose_at_aligned
 from vision.corners import gt_image_keypoints
 from vision.debug_markers import clear_gt_corner_markers, sync_gt_corner_markers
 
@@ -145,10 +144,11 @@ def run(
     peg_orn = p.getLinkState(robot_id, peg)[1]
     m0 = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
     cam_pos, _ = cam2._pose()
+    ref_eye, _ = fixed_cam_pose_at_aligned(hole_xy)
 
     print(f"hole_xy={hole_xy}")
-    print(f"fixed_cam reference eye={eye_for_hole(hole_xy)} target={target_for_hole(hole_xy)}")
     print(f"wrist_camera2 world pos={tuple(round(x, 4) for x in cam_pos)}")
+    print(f"fixed_cam eye (at align)={tuple(round(x, 4) for x in ref_eye)}")
     print(f"intrinsics {cam2.width}x{cam2.height} FOV={cam2.fov}°")
     print(f"demo standoff={m0['standoff']*1e3:.1f}mm")
 
