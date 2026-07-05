@@ -45,6 +45,8 @@ def run_visp_dvs_fine(
     plane_z: float,
     gui: bool = False,
     on_step: Callable[[], None] | None = None,
+    start_err: float | None = None,
+    abort_err: float | None = None,
 ) -> tuple[bool, float, bool]:
     """Pure ViSP photometric servo — official task + UR CAMERA_FRAME execution.
 
@@ -67,8 +69,11 @@ def run_visp_dvs_fine(
         float(VISP_DVS_LAMBDA),
     )
 
+    gate = VISP_DVS_START_ERR if start_err is None else start_err
+    abort = VISP_DVS_ABORT_ERR if abort_err is None else abort_err
+
     err_sq = float(task.error_at(np.ascontiguousarray(I0, dtype=np.uint8)))
-    if err_sq > VISP_DVS_START_ERR:
+    if err_sq > gate:
         stop_arm(robot_id, arm)
         return False, err_sq, True
 
@@ -84,7 +89,7 @@ def run_visp_dvs_fine(
         elif gui:
             time.sleep(1.0 / 240.0)
 
-        if err_sq > max(VISP_DVS_ABORT_ERR, err0 * 10.0):
+        if err_sq > max(abort, err0 * 10.0):
             stop_arm(robot_id, arm)
             return False, err_sq, False
         if err_sq < VISP_DVS_ERROR_TOL:

@@ -64,6 +64,9 @@ def visp_flow_episode(
     rng: random.Random | None = None,
     coarse_method: CoarseMethod = "kabsch",
     teach_dir: str | None = None,
+    always_run_dvs: bool = False,
+    dvs_start_err: float | None = None,
+    dvs_abort_err: float | None = None,
 ) -> tuple[bool, dict[str, Any], tuple[float, float]]:
     require_visp_python()
 
@@ -234,7 +237,7 @@ def visp_flow_episode(
     dvs_ok = False
     dvs_err = 0.0
     dvs_gated = False
-    dvs_skipped = coarse_ok
+    dvs_skipped = coarse_ok and not always_run_dvs
     if dvs_skipped:
         print("第二阶段跳过: 第一阶段已对准")
     elif dvs_target is not None:
@@ -254,10 +257,13 @@ def visp_flow_episode(
             plane_z=dvs_plane_z,
             gui=gui,
             on_step=_on_frame_cam_only if gui else None,
+            start_err=dvs_start_err,
+            abort_err=dvs_abort_err,
         )
+        gate = dvs_start_err if dvs_start_err is not None else VISP_DVS_START_ERR
         if dvs_gated:
             print(
-                f"第二阶段跳过: DVS 光度误差 ||e||²={dvs_err:.6g} > {VISP_DVS_START_ERR} "
+                f"第二阶段跳过: DVS 光度误差 ||e||²={dvs_err:.6g} > {gate} "
                 f"(未在示教 capture 区)"
             )
         else:
@@ -269,7 +275,7 @@ def visp_flow_episode(
     peg_orn = p.getLinkState(robot_id, peg)[1]
     mf = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
     gt_ok = metrics_converged(mf)
-    aligned = teach_ok and coarse_ok and gt_ok and (dvs_skipped or dvs_ok)
+    aligned = teach_ok and gt_ok and (dvs_ok if always_run_dvs or not coarse_ok else (dvs_skipped or dvs_ok))
 
     report: dict[str, Any] = {
         "coarse_method": coarse_method,
@@ -289,6 +295,13 @@ def visp_flow_episode(
         report["coarse_metrics"] = coarse_metrics
 
     if gui:
+        if dvs_skipped:
+            _pause_gui(
+                gui,
+                20.0,
+                "粗对准完成（跳过 DVS），查看终态…",
+                _on_frame_corners,
+            )
         close_camera_windows()
     wrist_cam.detach()
     p.disconnect()
