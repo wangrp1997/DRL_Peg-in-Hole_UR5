@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import pybullet as p
 
-from constants import PERTURB_SERVO_PAUSE_S, SETTLE_IK_STEPS, SETTLE_IK_STEPS_GUI
+from constants import PERTURB_SERVO_PAUSE_S, PLATE_TOP_Z, SETTLE_IK_STEPS, SETTLE_IK_STEPS_GUI
 from geometry import alignment_metrics, metrics_converged, peg_tip_world
 from sim.cartesian_align import run_cartesian_align
 from sim.perturbation import (
@@ -29,11 +29,12 @@ from sim.scene import (
 from sim.wrist_camera2 import attach_wrist_camera2
 from visp_flow.visp_constants import COARSE_STANDOFF
 from visp_flow.dvs_fine import run_visp_dvs_fine
-from visp_flow.ibvs_coarse import run_visp_ibvs_coarse
+from visp_flow.ibvs_coarse import run_pnp_preflight_for_ibvs, run_visp_ibvs_coarse
 from visp_flow.kabsch_coarse import run_kabsch_coarse
 from visp_flow.require_visp import require_visp_python
 from visp_flow.teach import capture_aligned_teach, save_teach_bundle
 from vision.corners import gt_image_keypoints
+from vision.align import metrics_from_keypoints
 
 CoarseMethod = Literal["kabsch", "ibvs"]
 PHASE_PAUSE_S = PERTURB_SERVO_PAUSE_S  # 3 s
@@ -147,19 +148,72 @@ def visp_flow_episode(
     coarse_metrics = None
     if ibvs_desired is not None:
         if coarse_method == "ibvs":
-            coarse_ok, ibvs_err = run_visp_ibvs_coarse(
+            pre_ok, pre_px, pre_gt = run_pnp_preflight_for_ibvs(
                 robot_id,
-                eef,
                 peg,
                 arm,
                 wrist_cam,
-                ibvs_desired,
-                _provider,
                 hole_xy,
                 hole_orn,
+                _provider,
                 gui=gui,
                 on_step=_on_frame_corners if gui else None,
             )
+            standoff = peg_tip_world(robot_id, peg)[2] - PLATE_TOP_Z
+            kps_pre = _provider()
+            m_pre = None
+            if kps_pre is not None:
+                m_pre = metrics_from_keypoints(
+                    kps_pre, wrist_cam, hole_xy, hole_orn, standoff_hint=standoff
+                )
+            if pre_ok:
+                print(
+                    f"IBVS preflight: px={pre_px:.1f} → 纯 ViSP IBVS "
+                    f"(GT aligned={pre_gt or (m_pre and metrics_converged(m_pre))})"
+                )
+                coarse_ok, ibvs_err = run_visp_ibvs_coarse(
+                    robot_id,
+                    eef,
+                    peg,
+                    arm,
+                    wrist_cam,
+                    ibvs_desired,
+                    _provider,
+                    hole_xy,
+                    hole_orn,
+                    gui=gui,
+                    on_step=_on_frame_corners if gui else None,
+                )
+            elif pre_gt:
+                print(f"IBVS preflight: PnP 在 px>{pre_px:.1f} 时 GT 已收敛，仍跑纯 IBVS")
+                coarse_ok, ibvs_err = run_visp_ibvs_coarse(
+                    robot_id,
+                    eef,
+                    peg,
+                    arm,
+                    wrist_cam,
+                    ibvs_desired,
+                    _provider,
+                    hole_xy,
+                    hole_orn,
+                    gui=gui,
+                    on_step=_on_frame_corners if gui else None,
+                )
+            else:
+                print(f"IBVS preflight: 未进入启动包络 (px≈{pre_px:.1f})，仍尝试纯 IBVS")
+                coarse_ok, ibvs_err = run_visp_ibvs_coarse(
+                    robot_id,
+                    eef,
+                    peg,
+                    arm,
+                    wrist_cam,
+                    ibvs_desired,
+                    _provider,
+                    hole_xy,
+                    hole_orn,
+                    gui=gui,
+                    on_step=_on_frame_corners if gui else None,
+                )
         else:
             coarse_ok, coarse_metrics = run_kabsch_coarse(
                 robot_id,
