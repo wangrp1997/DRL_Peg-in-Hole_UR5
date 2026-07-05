@@ -56,6 +56,16 @@ public:
     return py::make_tuple(out, normError);
   }
 
+  double errorAt(vpImage<unsigned char> &I)
+  {
+    if (!initialized) {
+      throw std::runtime_error("PhotometricServoTask::init() must be called first");
+    }
+    sI.buildFrom(I);
+    servo.computeControlLaw();
+    return servo.getError().sumSquare();
+  }
+
 private:
   vpFeatureLuminance sI;
   vpFeatureLuminance sId;
@@ -72,7 +82,13 @@ static vpImage<unsigned char> numpy_gray_to_vpimage(
   }
   const unsigned h = static_cast<unsigned>(buf.shape[0]);
   const unsigned w = static_cast<unsigned>(buf.shape[1]);
-  vpImage<unsigned char> I(static_cast<unsigned char *>(buf.ptr), h, w, true);
+  vpImage<unsigned char> I(h, w);
+  const auto *src = static_cast<unsigned char *>(buf.ptr);
+  for (unsigned r = 0; r < h; ++r) {
+    for (unsigned c = 0; c < w; ++c) {
+      I[r][c] = src[r * w + c];
+    }
+  }
   return I;
 }
 
@@ -91,5 +107,9 @@ PYBIND11_MODULE(photometric_servo, m)
       .def("step", [](PhotometricServoTask &self, py::array_t<uint8_t> I) {
         vpImage<unsigned char> img = numpy_gray_to_vpimage(I);
         return self.step(img);
+      })
+      .def("error_at", [](PhotometricServoTask &self, py::array_t<uint8_t> I) {
+        vpImage<unsigned char> img = numpy_gray_to_vpimage(I);
+        return self.errorAt(img);
       });
 }

@@ -27,7 +27,7 @@ from sim.scene import (
     setup_wrist_camera2_views,
 )
 from sim.wrist_camera2 import attach_wrist_camera2
-from visp_flow.visp_constants import COARSE_STANDOFF
+from visp_flow.visp_constants import COARSE_STANDOFF, VISP_DVS_START_ERR
 from visp_flow.dvs_fine import run_visp_dvs_fine
 from visp_flow.ibvs_coarse import run_pnp_preflight_for_ibvs, run_visp_ibvs_coarse
 from visp_flow.kabsch_coarse import run_kabsch_coarse
@@ -104,16 +104,19 @@ def visp_flow_episode(
 
     teach_path = ""
     dvs_target = None
+    dvs_plane_z = 0.10
     ibvs_desired = None
     if teach_ok:
         kps0 = _provider()
         hole_kp = next(s for s in kps0 if s.name == "hole")
         peg_kp = next(s for s in kps0 if s.name == "peg")
-        ibvs_desired, dvs_target = capture_aligned_teach(
-            wrist_cam, hole_kp, peg_kp, robot_id, peg, gui=gui
+        ibvs_desired, dvs_target, dvs_plane_z = capture_aligned_teach(
+            wrist_cam, hole_kp, peg_kp, robot_id, peg, hole_xy, gui=gui
         )
         if ibvs_desired is not None:
-            _, teach_path = save_teach_bundle(ibvs_desired, dvs_target, hole_xy, m_align, out_dir=teach_dir)
+            _, teach_path = save_teach_bundle(
+                ibvs_desired, dvs_target, hole_xy, m_align, dvs_plane_z=dvs_plane_z, out_dir=teach_dir
+            )
             print(f"visp teach saved: {teach_path}")
         else:
             print("teach skipped: IBVS corner assignment failed")
@@ -230,6 +233,7 @@ def visp_flow_episode(
 
     dvs_ok = False
     dvs_err = 0.0
+    dvs_gated = False
     dvs_skipped = coarse_ok
     if dvs_skipped:
         print("第二阶段跳过: 第一阶段已对准")
@@ -240,16 +244,24 @@ def visp_flow_episode(
             "准备开始第二阶段伺服（ViSP 光度 DVS）…",
             _on_frame_cam_only,
         )
-        dvs_ok, dvs_err = run_visp_dvs_fine(
+        dvs_ok, dvs_err, dvs_gated = run_visp_dvs_fine(
             robot_id,
             wrist_cam.ee_link,
+            peg,
             arm,
             wrist_cam,
             dvs_target,
+            plane_z=dvs_plane_z,
             gui=gui,
             on_step=_on_frame_cam_only if gui else None,
         )
-        print(f"第二阶段结束: dvs ok={dvs_ok} ||e||²={dvs_err:.6g}")
+        if dvs_gated:
+            print(
+                f"第二阶段跳过: DVS 光度误差 ||e||²={dvs_err:.6g} > {VISP_DVS_START_ERR} "
+                f"(未在示教 capture 区)"
+            )
+        else:
+            print(f"第二阶段结束: dvs ok={dvs_ok} ||e||²={dvs_err:.6g}")
     else:
         print("第二阶段跳过: 无 I*")
 
@@ -265,6 +277,7 @@ def visp_flow_episode(
         "coarse_ok": coarse_ok,
         "dvs_ok": dvs_ok,
         "dvs_skipped": dvs_skipped,
+        "dvs_gated": dvs_gated,
         "ibvs_err": ibvs_err,
         "dvs_err": dvs_err,
         "teach_path": teach_path,

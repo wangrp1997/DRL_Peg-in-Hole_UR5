@@ -72,10 +72,11 @@ def capture_servo_rgbd_gray(
     *,
     gui: bool = False,
     warmup: int = 1,
+    use_cache: bool = False,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """One HARDWARE render per control step; gray for ViSP, full buffer for OpenCV panel."""
+    """One render per control step; use_cache=False for ViSP servo (avoid stale I*)."""
     rgba, depth, seg = render_rgbd(
-        cam, gui=gui, with_depth_seg=True, use_cache=True, warmup=warmup
+        cam, gui=gui, with_depth_seg=True, use_cache=use_cache, warmup=warmup
     )
     rgb = np.ascontiguousarray(rgba[..., :3])
     if rgb.dtype != np.uint8:

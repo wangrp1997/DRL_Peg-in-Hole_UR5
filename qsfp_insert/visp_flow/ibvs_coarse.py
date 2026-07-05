@@ -11,11 +11,15 @@ from visp.visual_features import FeaturePoint
 from visp.vs import Servo
 
 from constants import GUI_SERVO_REFRESH_EVERY, IBVS_STALL_STEPS, MIN_CORNERS_VISIBLE, PLATE_TOP_Z
-from geometry import metrics_converged, peg_tip_world
+from geometry import AlignmentMetrics, metrics_converged, peg_tip_world
 from sim.cartesian_control import alignment_twist, apply_cartesian_velocity, stop_arm
 from sim.wrist_camera2 import WristCamera2
 from visp_flow.camera_params import camera_parameters_from_K
 from visp_flow.visp_constants import (
+    VISP_IBVS_ABORT_ANG_RAD,
+    VISP_IBVS_ABORT_STANDOFF_MAX,
+    VISP_IBVS_ABORT_STANDOFF_MIN,
+    VISP_IBVS_ABORT_XY_M,
     VISP_IBVS_ERROR_TOL,
     VISP_IBVS_LAMBDA,
     VISP_IBVS_MAX_STEPS,
@@ -60,6 +64,20 @@ def _feature_xyz(
     return float(xm), float(ym), float(z)
 
 
+def _ibvs_diverged(m: AlignmentMetrics) -> bool:
+    if m["standoff"] < VISP_IBVS_ABORT_STANDOFF_MIN or m["standoff"] > VISP_IBVS_ABORT_STANDOFF_MAX:
+        return True
+    if abs(m["dx"]) > VISP_IBVS_ABORT_XY_M or abs(m["dy"]) > VISP_IBVS_ABORT_XY_M:
+        return True
+    if (
+        abs(m["roll"]) > VISP_IBVS_ABORT_ANG_RAD
+        or abs(m["pitch"]) > VISP_IBVS_ABORT_ANG_RAD
+        or abs(m["yaw"]) > VISP_IBVS_ABORT_ANG_RAD
+    ):
+        return True
+    return False
+
+
 def teach_ibvs_desired(
     cam: WristCamera2,
     hole_kp: ImageKeypoints,
@@ -74,8 +92,8 @@ def teach_ibvs_desired(
     corners = peg_tip_corners_world(robot_id, peg)
     pd: list[tuple[float, float, float]] = [(0.0, 0.0, 0.12)] * 4
     for h, p_idx in pairs:
-        hu, hv = hole_kp.uv[h]
-        pd[h] = _feature_xyz(vp_cam, cam, hu, hv, corners[p_idx], 0.12)
+        pu, pv = peg_kp.uv[p_idx]
+        pd[h] = _feature_xyz(vp_cam, cam, pu, pv, corners[p_idx], 0.12)
     return IbvsDesiredFeatures(pd=tuple(pd), pairs=tuple(pairs))
 
 
@@ -91,10 +109,7 @@ def run_pnp_preflight_for_ibvs(
     gui: bool = False,
     on_step: Callable[[], None] | None = None,
 ) -> tuple[bool, float, bool]:
-    """Separate kabsch PnP stage: stop at VISP_IBVS_START_PX while GT still not converged.
-
-    Returns (ready_for_ibvs, pixel_rms, gt_already_converged).
-    """
+    """Separate kabsch PnP stage: stop at VISP_IBVS_START_PX while GT still not converged."""
     last_px = float("inf")
     for step in range(VISP_PNP_PREFLIGHT_MAX_STEPS):
         kps = keypoint_provider()
@@ -182,9 +197,19 @@ def run_visp_ibvs_coarse(
                 stop_arm(robot_id, arm)
                 return False, err_sq
 
-            corners_world = peg_tip_corners_world(robot_id, peg)
+            hole_kp = next(k for k in kps if k.name == "hole")
             peg_kp = next(k for k in kps if k.name == "peg")
+            corners_world = peg_tip_corners_world(robot_id, peg)
             for h, p_idx in desired.pairs:
+                hu, hv = hole_kp.uv[h]
+                xm_d, ym_d = PixelMeterConversion.convertPoint(vp_cam, float(hu), float(hv))
+                z_d = _world_to_cam_z(cam, corners_world[p_idx])
+                if z_d <= 1e-6:
+                    z_d = desired.pd[h][2]
+                pd_feat[h].set_x(float(xm_d))
+                pd_feat[h].set_y(float(ym_d))
+                pd_feat[h].set_Z(float(z_d))
+
                 pu, pv = peg_kp.uv[p_idx]
                 xm, ym, z = _feature_xyz(
                     vp_cam, cam, pu, pv, corners_world[p_idx], desired.pd[h][2]
@@ -195,7 +220,7 @@ def run_visp_ibvs_coarse(
 
             v_c = task.computeControlLaw()
             err_sq = float(task.getError().sumSquare())
-            apply_visp_camera_velocity(robot_id, ee_link, arm, v_c)
+            apply_visp_camera_velocity(robot_id, ee_link, arm, v_c, peg_link=peg)
 
             if abs(err_sq - prev_err) < 1e-8:
                 stall += 1
@@ -209,14 +234,24 @@ def run_visp_ibvs_coarse(
             elif gui:
                 time.sleep(1.0 / 240.0)
 
+            kps_after = keypoint_provider()
+            if kps_after is None:
+                stop_arm(robot_id, arm)
+                return False, err_sq
             standoff = peg_tip_world(robot_id, peg)[2] - PLATE_TOP_Z
-            m = metrics_from_keypoints(kps, cam, hole_xy, hole_orn, standoff_hint=standoff)
-            if m is not None and metrics_converged(m):
+            m = metrics_from_keypoints(kps_after, cam, hole_xy, hole_orn, standoff_hint=standoff)
+            if m is None:
+                stop_arm(robot_id, arm)
+                return False, err_sq
+            if _ibvs_diverged(m):
+                stop_arm(robot_id, arm)
+                return False, err_sq
+            if metrics_converged(m):
                 stop_arm(robot_id, arm)
                 return True, err_sq
             if err_sq < VISP_IBVS_ERROR_TOL:
                 stop_arm(robot_id, arm)
-                return bool(m and metrics_converged(m)), err_sq
+                return metrics_converged(m), err_sq
             if stall >= IBVS_STALL_STEPS:
                 break
     finally:

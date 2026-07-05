@@ -5,8 +5,8 @@ import numpy as np
 import pybullet as p
 from visp.core import ColVector, HomogeneousMatrix, RotationMatrix, TranslationVector, VelocityTwistMatrix
 
-from constants import CART_MAX_ANG, CART_MAX_LIN, CART_MAX_QDOT, CART_LAMBDA, WRIST_CAM2_EE_LOCAL_ORN, WRIST_CAM2_EE_LOCAL_POS
-from sim.cartesian_control import damped_pinv
+from constants import CART_MAX_ANG, CART_MAX_LIN, WRIST_CAM2_EE_LOCAL_ORN, WRIST_CAM2_EE_LOCAL_POS
+from sim.cartesian_control import apply_cartesian_velocity
 from visp_flow.require_visp import require_visp_python
 
 require_visp_python()
@@ -82,28 +82,18 @@ def camera_velocity_to_world_twist(robot_id: int, ee_link: int, v_cam) -> np.nda
     return np.concatenate([lin, ang])
 
 
-def _jacobian_ee(robot_id: int, ee_link: int, arm: list[int]) -> np.ndarray:
-    q = [p.getJointState(robot_id, j)[0] for j in arm]
-    z = [0.0] * len(arm)
-    jt, jr = p.calculateJacobian(robot_id, ee_link, [0.0, 0.0, 0.0], q, z, z)
-    return np.vstack([jt, jr])
-
-
 def apply_visp_camera_velocity(
     robot_id: int,
     ee_link: int,
     arm: list[int],
     v_cam,
     *,
+    peg_link: int | None = None,
     cam_body_id: int | None = None,
 ) -> None:
-    """Apply v_c like UR robot.setVelocity(vpRobot::CAMERA_FRAME, v_c)."""
-    del cam_body_id  # chain uses eMc + fMe, not live camera pose
+    """Apply v_c: UR fVe·eVc chain → world twist → peg-tip Jacobian (matches PnP preflight)."""
+    del cam_body_id
     v_world = camera_velocity_to_world_twist(robot_id, ee_link, v_cam)
-    j = _jacobian_ee(robot_id, ee_link, arm)
-    qdot = damped_pinv(j, CART_LAMBDA) @ v_world
-    n = np.linalg.norm(qdot)
-    if n > CART_MAX_QDOT:
-        qdot *= CART_MAX_QDOT / n
-    for j_idx, v in zip(arm, qdot):
-        p.setJointMotorControl2(robot_id, j_idx, p.VELOCITY_CONTROL, targetVelocity=float(v), force=500.0)
+    if peg_link is None:
+        raise ValueError("peg_link required for Cartesian IBVS execution")
+    apply_cartesian_velocity(robot_id, peg_link, arm, v_world)

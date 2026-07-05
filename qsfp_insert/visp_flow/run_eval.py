@@ -42,6 +42,7 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str) -> dict:
             "success": success,
             "coarse_ok": report.get("coarse_ok"),
             "dvs_ok": report.get("dvs_ok"),
+            "dvs_gated": report.get("dvs_gated"),
             "dvs_err": report.get("dvs_err"),
             "coarse_method": coarse_method,
         }
