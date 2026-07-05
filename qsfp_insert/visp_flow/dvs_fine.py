@@ -30,7 +30,7 @@ def _photometric_task():
 
 def run_visp_dvs_fine(
     robot_id: int,
-    peg: int,
+    ee_link: int,
     arm: list[int],
     wrist_cam: WristCamera2,
     target_gray: np.ndarray,
@@ -59,7 +59,7 @@ def run_visp_dvs_fine(
     for step in range(VISP_DVS_MAX_STEPS):
         I, _buf = capture_servo_rgbd_gray(wrist_cam, gui=gui, warmup=1)
         v_list, err_sq = task.step(np.ascontiguousarray(I, dtype=np.uint8))
-        apply_visp_camera_velocity(robot_id, peg, arm, v_list)
+        apply_visp_camera_velocity(robot_id, ee_link, arm, v_list)
 
         p.stepSimulation()
         if on_step is not None and (not gui or step % GUI_SERVO_REFRESH_EVERY == 0):

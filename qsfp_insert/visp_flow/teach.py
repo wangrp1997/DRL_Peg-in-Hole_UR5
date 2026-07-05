@@ -47,12 +47,13 @@ def save_teach_bundle(
 def capture_aligned_teach(
     wrist_cam: WristCamera2,
     hole_kp: ImageKeypoints,
+    peg_kp: ImageKeypoints,
     robot_id: int,
     peg: int,
     *,
     gui: bool = False,
-) -> tuple[IbvsDesiredFeatures, np.ndarray]:
+) -> tuple[IbvsDesiredFeatures | None, np.ndarray]:
     """I* + IBVS pd at aligned pose — same timing as servo_align --save_target."""
-    ibvs = teach_ibvs_desired(wrist_cam, hole_kp, robot_id, peg)
+    ibvs = teach_ibvs_desired(wrist_cam, hole_kp, peg_kp, robot_id, peg)
     gray = render_grayscale(wrist_cam, gui=gui, warmup=2)
     return ibvs, gray

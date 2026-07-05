@@ -107,11 +107,15 @@ def visp_flow_episode(
     if teach_ok:
         kps0 = _provider()
         hole_kp = next(s for s in kps0 if s.name == "hole")
+        peg_kp = next(s for s in kps0 if s.name == "peg")
         ibvs_desired, dvs_target = capture_aligned_teach(
-            wrist_cam, hole_kp, robot_id, peg, gui=gui
+            wrist_cam, hole_kp, peg_kp, robot_id, peg, gui=gui
         )
-        _, teach_path = save_teach_bundle(ibvs_desired, dvs_target, hole_xy, m_align, out_dir=teach_dir)
-        print(f"visp teach saved: {teach_path}")
+        if ibvs_desired is not None:
+            _, teach_path = save_teach_bundle(ibvs_desired, dvs_target, hole_xy, m_align, out_dir=teach_dir)
+            print(f"visp teach saved: {teach_path}")
+        else:
+            print("teach skipped: IBVS corner assignment failed")
     else:
         print("teach skipped: align failed at teach pose")
 
@@ -145,6 +149,7 @@ def visp_flow_episode(
         if coarse_method == "ibvs":
             coarse_ok, ibvs_err = run_visp_ibvs_coarse(
                 robot_id,
+                eef,
                 peg,
                 arm,
                 wrist_cam,
@@ -183,7 +188,7 @@ def visp_flow_episode(
         )
         dvs_ok, dvs_err = run_visp_dvs_fine(
             robot_id,
-            peg,
+            wrist_cam.ee_link,
             arm,
             wrist_cam,
             dvs_target,
