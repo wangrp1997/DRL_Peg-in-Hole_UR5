@@ -15,6 +15,9 @@ env/
 outputs/
 qsfp_insert/teach/dvs_targets/*
 !qsfp_insert/teach/dvs_targets/.gitkeep
+qsfp_insert/visp_flow/teach/*
+!qsfp_insert/visp_flow/teach/.gitkeep
+qsfp_insert/visp_flow/native/build/
 # IDE / OS
 .idea/
 .vscode/

@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pybullet as p
 
+from sim.wrist2_render import render_grayscale
 from sim.wrist_camera2 import WristCamera2, attach_wrist_camera2
 
 DEFAULT_DVS_TARGET_DIR = os.path.join(
@@ -18,15 +19,16 @@ DEFAULT_DVS_TARGET_DIR = os.path.join(
 )
 
 
-def render_grayscale(cam: WristCamera2, warmup: int = 2, use_hardware: bool = False) -> np.ndarray:
-    """Grab gray frame; GUI sessions use HARDWARE like refresh_camera_views."""
-    rgba = None
-    for _ in range(max(1, warmup)):
-        rgba = cam.render(with_depth_seg=False, for_opencv=not use_hardware)
-    rgb = np.ascontiguousarray(rgba[..., :3])
-    if rgb.dtype != np.uint8:
-        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+def capture_dvs_target_gray(
+    cam: WristCamera2,
+    *,
+    gui: bool = False,
+    settle_steps: int = 10,
+) -> np.ndarray:
+    """Grab gray I* from wrist_camera2 after alignment (HARDWARE + cache if gui)."""
+    for _ in range(settle_steps):
+        p.stepSimulation()
+    return render_grayscale(cam, gui=gui, warmup=2)
 
 
 def save_dvs_target_image(
@@ -38,7 +40,7 @@ def save_dvs_target_image(
     cam: WristCamera2 | None = None,
     gui: bool = False,
 ) -> tuple[str, str]:
-    """Grab aligned gray frame from wrist_camera2; attach temporarily if cam is None."""
+    """After align ok: wrist_camera2 gray PNG + JSON (servo_align --save_target)."""
     out_dir = out_dir or DEFAULT_DVS_TARGET_DIR
     os.makedirs(out_dir, exist_ok=True)
 
@@ -47,7 +49,7 @@ def save_dvs_target_image(
         cam = attach_wrist_camera2(robot_id, ee_link, hole_xy)
         for _ in range(10):
             p.stepSimulation()
-    gray = render_grayscale(cam, use_hardware=gui)
+    gray = capture_dvs_target_gray(cam, gui=gui)
     if owned:
         cam.detach()
 

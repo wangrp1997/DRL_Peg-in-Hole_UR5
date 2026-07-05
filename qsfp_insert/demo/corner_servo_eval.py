@@ -105,7 +105,7 @@ if __name__ == "__main__":
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument(
         "--align-method",
-        choices=("kabsch", "ibvs", "dvs"),
+        choices=("kabsch", "ibvs"),
         default=CORNER_ALIGN_METHOD,
     )
     ap.add_argument(

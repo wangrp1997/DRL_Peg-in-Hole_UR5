@@ -38,15 +38,7 @@ _wrist2_opencv = False
 _wrist2_last_rgba = None
 
 
-def _rgba_is_blank(rgba: np.ndarray) -> bool:
-    rgb = rgba[..., :3]
-    return float(rgb.max()) < 1.0
-
-
-def _render_wrist_camera2(with_depth_seg: bool, for_opencv: bool):
-    if _wrist_camera2 is None:
-        raise RuntimeError("wrist_camera2 not initialized")
-    return _wrist_camera2.render(with_depth_seg, for_opencv=for_opencv)
+from sim.wrist2_render import rgba_is_blank, render_rgbd, reset_wrist2_render_cache, get_cached_rgbd
 
 
 def urdf(name: str) -> str:
@@ -390,7 +382,7 @@ def show_fixed_camera_panel(get_keypoint_sets=None) -> None:
     refresh_camera_views(get_keypoint_sets)
 
 
-def refresh_camera_views(get_keypoint_sets=None) -> None:
+def refresh_camera_views(get_keypoint_sets=None, *, render: bool = True) -> None:
     """One HARDWARE render per active cam; OpenCV reuses that buffer (fixed_cam pattern)."""
     global _wrist2_last_rgba
     wrist2_buf = None
@@ -398,7 +390,13 @@ def refresh_camera_views(get_keypoint_sets=None) -> None:
     fixed_buf = None
 
     if _gui_wrist2 and _wrist_camera2 is not None:
-        wrist2_buf = _render_wrist_camera2(True, for_opencv=False)
+        if render:
+            wrist2_buf = render_rgbd(_wrist_camera2, gui=True, with_depth_seg=True, use_cache=True, warmup=1)
+            wrist2_buf = (wrist2_buf[0], wrist2_buf[1], wrist2_buf[2])
+        else:
+            cached = get_cached_rgbd()
+            if cached is not None:
+                wrist2_buf = cached
     elif _gui_wrist and _wrist_cam is not None and _gui_robot_id is not None:
         wrist_buf = _render_wrist_cam(True, for_opencv=False)
     elif _gui_fixed and _fixed_cam is not None:
@@ -408,11 +406,17 @@ def refresh_camera_views(get_keypoint_sets=None) -> None:
         sets = get_keypoint_sets() if get_keypoint_sets is not None else None
         if wrist2_buf is not None:
             rgba, depth, seg = wrist2_buf
+        elif not render:
+            cached = get_cached_rgbd()
+            if cached is not None:
+                rgba, depth, seg = cached
+            else:
+                rgba = depth = seg = None
         elif _wrist_camera2 is not None:
-            rgba, depth, seg = _render_wrist_camera2(True, for_opencv=False)
+            rgba, depth, seg = render_rgbd(_wrist_camera2, gui=True, with_depth_seg=True, use_cache=True, warmup=1)
         else:
             rgba = depth = seg = None
-        if rgba is not None and not _rgba_is_blank(rgba):
+        if rgba is not None and not rgba_is_blank(rgba):
             _wrist2_last_rgba = (rgba, depth, seg)
         elif _wrist2_last_rgba is not None:
             rgba, depth, seg = _wrist2_last_rgba
@@ -455,6 +459,7 @@ def close_camera_windows() -> None:
     _gui_wrist2 = False
     _wrist2_opencv = False
     _wrist2_last_rgba = None
+    reset_wrist2_render_cache()
 
 
 def settle(steps: int = 10, gui: bool = False) -> None:

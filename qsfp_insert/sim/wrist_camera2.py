@@ -108,6 +108,16 @@ class WristCamera2:
         direction /= np.linalg.norm(direction)
         return p_near, direction
 
+    def world_point_on_plane(self, u: float, v: float, plane_z: float) -> tuple[float, float, float] | None:
+        origin, direction = self.ray_world(u, v)
+        if abs(direction[2]) < 1e-9:
+            return None
+        t = (plane_z - origin[2]) / direction[2]
+        if t < 0.0:
+            return None
+        pt = origin + t * direction
+        return float(pt[0]), float(pt[1]), float(pt[2])
+
     def detach(self) -> None:
         if self.constraint_id >= 0:
             p.removeConstraint(self.constraint_id)

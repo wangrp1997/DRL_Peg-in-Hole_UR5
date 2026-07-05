@@ -37,7 +37,6 @@ from sim.scene import (
 from vision.corner_servo import run_corner_servo
 from vision.corners import gt_image_keypoints
 from vision.debug_markers import clear_gt_corner_markers, sync_gt_corner_markers
-from vision.direct_ibvs import run_direct_image_servo, teach_aligned_patch
 
 
 def sample_hole_xy(rng: random.Random) -> tuple[float, float]:
@@ -101,12 +100,6 @@ def corner_servo_episode(
     _show_keypoints()
 
     method = align_method or "kabsch"
-    taught = None
-    if method == "dvs":
-        cam = get_fixed_camera()
-        if cam is not None:
-            taught = teach_aligned_patch(cam, hole_xy, robot_id, peg)
-            print("dvs: taught aligned ROI (target image I*) before perturbation")
 
     if perturb is None and rng is not None:
         perturb = sample_perturbation6(rng)
@@ -129,33 +122,18 @@ def corner_servo_episode(
             sync_gt_corner_markers(robot_id, peg, hole_id, kps, cam)
             refresh_camera_views(_provider)
 
-    aligned: bool
-    photo_ssd: float | None = None
-    if taught is not None:
-        aligned, m, photo_ssd = run_direct_image_servo(
-            robot_id,
-            arm,
-            peg,
-            cam,
-            hole_xy,
-            hole_orn,
-            taught,
-            gui=gui,
-            on_step=_on_step if gui else None,
-        )
-    else:
-        aligned, m = run_corner_servo(
-            robot_id,
-            arm,
-            peg,
-            cam,
-            hole_xy,
-            hole_orn,
-            _provider,
-            gui=gui,
-            on_step=_on_step if gui else None,
-            align_method=align_method,
-        )
+    aligned, m = run_corner_servo(
+        robot_id,
+        arm,
+        peg,
+        cam,
+        hole_xy,
+        hole_orn,
+        _provider,
+        gui=gui,
+        on_step=_on_step if gui else None,
+        align_method=align_method,
+    )
 
     inserted: bool | None = None
     if insert and aligned:
@@ -177,8 +155,6 @@ def corner_servo_episode(
             "yaw_deg": round(math.degrees(m["yaw"]), 3),
             "perturb": perturb,
         }
-        if photo_ssd is not None:
-            info["photo_ssd"] = round(photo_ssd, 3)
         tip = peg_tip_world(robot_id, peg)
         peg_orn = p.getLinkState(robot_id, peg)[1]
         gt = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)

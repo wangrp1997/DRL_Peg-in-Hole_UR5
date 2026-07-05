@@ -24,9 +24,9 @@ from constants import (
 )
 from geometry import AlignmentMetrics, metrics_converged, rpy_error
 from sim.fixed_camera import FixedCamera
-from vision.corners import HOLE_HALF_X, HOLE_HALF_Y, ImageKeypoints
+from vision.corners import HOLE_HALF_X, HOLE_HALF_Y, ImageKeypoints, ProjectorCam
 
-AlignMethod = Literal["kabsch", "ibvs", "dvs"]
+AlignMethod = Literal["kabsch", "ibvs"]
 
 
 def _set_by_name(sets: list[ImageKeypoints]) -> tuple[ImageKeypoints, ImageKeypoints]:
@@ -579,7 +579,7 @@ def _cam_depth(pt_cam: np.ndarray) -> float:
 
 def metrics_from_keypoints(
     keypoints: list[ImageKeypoints],
-    cam: FixedCamera,
+    cam: ProjectorCam,
     hole_xy: tuple[float, float],
     hole_orn=None,
         depth_map: np.ndarray | None = None,

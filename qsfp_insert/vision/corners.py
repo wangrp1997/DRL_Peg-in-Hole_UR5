@@ -8,6 +8,9 @@ import pybullet as p
 
 from constants import HOLE_DEPTH, PEG_H, PEG_L, PEG_W, PLATE_TOP_Z
 from sim.fixed_camera import FixedCamera
+from sim.wrist_camera2 import WristCamera2
+
+ProjectorCam = FixedCamera | WristCamera2
 
 # qsfp_dd_hole_plate.urdf opening 19 × 9 mm.
 # PyBullet base origin is HOLE_DEPTH/2 below mouth (inertial at z=-HOLE_DEPTH/2); mouth at +HOLE_DEPTH/2.
@@ -69,7 +72,7 @@ def peg_tip_corners_world(robot_id: int, peg_link: int) -> list[tuple[float, flo
 
 
 def project_corners(
-    cam: FixedCamera,
+    cam: ProjectorCam,
     world_pts: list[tuple[float, float, float]],
 ) -> tuple[list[tuple[float, float]], list[bool]]:
     uv: list[tuple[float, float]] = []
@@ -146,7 +149,7 @@ def marker_world_point(
 
 
 def gt_image_keypoints(
-    cam: FixedCamera,
+    cam: ProjectorCam,
     robot_id: int,
     peg_link: int,
     hole_id: int,

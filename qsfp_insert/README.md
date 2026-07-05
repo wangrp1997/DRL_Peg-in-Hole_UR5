@@ -7,44 +7,76 @@ QSFP-DD 方孔 + 矩形轴，PyBullet 物理验证（独立于 `rlenv.py`）。
 ```bash
 python qsfp_insert/demo/servo_align.py --gui
 python qsfp_insert/demo/servo_align.py --gui --wrist_cam2 [--opencv_render] [--insert] [--save_target]
-python qsfp_insert/demo/servo_align.py --gui --wrist_cam [--opencv_render] [--insert]   # 旧 camera_link 腕部相机
-python qsfp_insert/demo/servo_align.py --gui --fixed_cam [--opencv_render] [--insert]
-python qsfp_insert/demo/servo_align.py --save_target   # 无 GUI，对准后 wrist_camera2 存 I*
-python qsfp_insert/demo/ur5_insert.py --gui [--wrist_cam] [--fixed_cam] [--opencv_render]
-# 眼在手外demo
-python qsfp_insert/demo/fixed_camera_demo.py --gui [--seed 42] [--draw_keypoints] [--align]
-# 眼在手demo
-python qsfp_insert/demo/wrist_camera_demo.py --gui [--seed 42] [--draw_keypoints] [--move]
-python qsfp_insert/demo/servo_align_eval.py --episodes 10 --seed 42 [--insert]
+python qsfp_insert/demo/corner_servo_align.py --gui --seed 42 [--align-method kabsch|ibvs]
+python qsfp_insert/demo/corner_servo_eval.py --episodes 10 --seed 42 [--align-method kabsch|ibvs]
 ```
 
-参数：`--gui` 仅 3D；`--wrist_cam2` **DVS 眼在手上相机**（挂 `ee_link`，对准位视角 ≈ fixed_cam，随腕运动）；`--wrist_cam` 为 URDF 侧向 `camera_link`；`--fixed_cam` 眼在手外；以上预览须 `--gui`；`--opencv_render` 再开 OpenCV 横排窗；`--insert` 对准后下插；`--save_target` 对准成功后用 **wrist_camera2** 抓 640×480 灰度 PNG（+ JSON）到 `teach/dvs_targets/`。
+`demo/` 为早期验证；**baseline 见下方 ViSP 流程**（无 OpenCV/自写控制律近似）。
 
-对准容差见 `constants.py`。
+## ViSP baseline（`visp_flow/`）
 
-## 伺服对齐
+**仅 `wrist_camera2`（眼在手上）**：IK standoff → **笛卡尔对准仅采 \(I^*\)** → **回 standoff** → 6D 扰动 → 停 3s 第一阶段（粗对准，角点 ON）→ 停 3s 第二阶段（ViSP DVS，角点 OFF）。
 
-固定外置相机 + GT 角点（暂代检测网络）：**IK 到 standoff 初始位 → 随机 6D 扰动 → 角点几何伺服对准**。
+渲染：`sim/wrist2_render.py`（GUI 用 HARDWARE + 空帧缓存，防 OpenCV/角预览闪黑）。
+
+| 阶段 | 官方 ViSP 来源 | 实现 |
+|------|----------------|------|
+| 粗 IBVS | `servoUniversalRobotsIBVS.cpp` | Python `visp.vs.Servo` + `FeaturePoint`，`EYEINHAND_CAMERA` |
+| 粗 kabsch | 几何 PnP（非 ViSP） | `align.py` planar PnP |
+| 细 DVS | `photometricVisualServoing.cpp` | `native/photometric_servo.cpp`（原样 `vpFeatureLuminance`+`vpServo`） |
+
+相机速度 → 机器人：ViSP `vpVelocityTwistMatrix`（同 UR example `setVelocity(CAMERA_FRAME)`）。
+
+### 编译（低配机器：最小模块 + 低并行）
+
+**不要用 `make -j$(nproc)`**，核数拉满容易卡死；建议 **`make -j2`**（内存够再用 `-j4`）。
+
+若 C++ 已编过（`third_party/visp/build/lib/libvisp_core.so` 存在），**跳过 cmake**，在 `build/` 里续编并装 Python 即可。
 
 ```bash
-python qsfp_insert/demo/corner_servo_align.py --gui --seed 42 [--align-method kabsch|ibvs|dvs] [--insert] [--infer-corner0]
-python qsfp_insert/demo/corner_servo_eval.py --episodes 10 --seed 42 [--align-method kabsch|ibvs|dvs] [--insert] [--infer-corner0]
+# 1) ViSP C++ + Python 绑定（仅 core / visual_features / vs）
+cd third_party/visp
+mkdir -p build && cd build
+cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_PYTHON3=ON \
+  -DBUILD_EXAMPLES=OFF \
+  -DBUILD_TESTS=OFF \
+  -DBUILD_DEMOS=OFF \
+  -DBUILD_JAVA=OFF \
+  -DUSE_PCL=OFF \
+  -DUSE_OGRE=OFF \
+  -DUSE_COIN3D=OFF \
+  -DUSE_GTK=OFF \
+  -DUSE_V4L2=OFF
+make -j2
+pip install ../modules/python/stubs   # 装完才能 import visp
+python3 -c "import visp.core; import visp.vs; print('visp ok')"
+
+# 2) 光度 DVS native（vpFeatureLuminance，Python 未暴露）
+cd qsfp_insert/visp_flow/native
+mkdir -p build && cd build
+cmake .. -DCMAKE_PREFIX_PATH=$HOME/Documents/DRL_Peg-in-Hole_UR5/third_party/visp/build
+make -j2
+export PYTHONPATH=$PWD:$PYTHONPATH
+python3 -c "import photometric_servo; print('photometric ok')"
 ```
 
-`--insert` 对准后继续沿 −Z 下插；`--infer-corner0` 仅检测角点 1–3，用平行四边形补 0 号点（overlay 洋红）再参与伺服/插入。
+续编时在同一 `build/` 目录执行 `make -j2` 即可，无需 `make clean`。
 
-`--align-method kabsch`（默认）：匹配角点 + 已知孔/轴矩形尺寸做 **planar PnP**，得完整 6D 误差。  
-`--align-method ibvs`：眼在手外 IBVS（角点像素 + \(J_{img}\)）；远距 PnP 粗调、近距 IBVS 精调。  
-`--align-method dvs`：**示教一次**对准位姿 ROI 为目标图 \(I^*\)，用 SSD/ECC 直接图像伺服，**控制环不依赖角点**。参考：Collewet–Marchand–Chaumette, *Photometric Visual Servoing*, IEEE TRO 2011；ViSP [`photometricVisualServoing.cpp`](https://visp-doc.inria.fr/doxygen/visp-3.6.0/photometricVisualServoing_8cpp-example.html) / `vpFeatureLuminance`；本实现用 OpenCV ECC 近似 ViSP template SSD。
+### 运行 / 评测
 
-初始位姿与 `fixed_camera_demo` 相同，用 **IK 一步到位**（`move_tip_to_standoff`）；扰动与对准阶段才走笛卡尔速度伺服。
+```bash
+python qsfp_insert/visp_flow/run_align.py --gui [--coarse-method kabsch|ibvs]
+python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch]
+```
 
 ## 目录
 
 | 路径 | 说明 |
 |------|------|
-| `demo/` | 可运行入口脚本 |
-| `sim/` | PyBullet 场景、外置相机、笛卡尔伺服 |
-| `vision/` | GT 角点、overlay、`align.py` 角点误差、`corner_servo.py` 闭环 |
-| `constants.py` / `geometry.py` | 尺寸与判据 |
-| `urdf/` | 孔板、治具、轴、UR5、外置相机 |
+| `demo/` | 早期 demo（fixed_cam 角点伺服等） |
+| `visp_flow/` | **ViSP baseline**（wrist2，无近似） |
+| `sim/` | PyBullet 场景、相机、笛卡尔伺服 |
+| `vision/` | GT 角点、几何对准 |
+| `third_party/visp/` | ViSP 官方源码 |
