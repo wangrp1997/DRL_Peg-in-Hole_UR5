@@ -18,6 +18,7 @@ qsfp_insert/teach/dvs_targets/*
 qsfp_insert/visp_flow/teach/*
 !qsfp_insert/visp_flow/teach/.gitkeep
 qsfp_insert/visp_flow/native/build/
+third_party/
 # IDE / OS
 .idea/
 .vscode/
