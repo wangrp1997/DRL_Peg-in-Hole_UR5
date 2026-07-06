@@ -38,6 +38,24 @@ def capture_teach_gray(
     raise TypeError(f"unsupported camera: {type(cam)}")
 
 
+def capture_teach_gray_and_seg(
+    cam: ProjectorCam,
+    *,
+    gui: bool = False,
+    warmup: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Same render path as capture_teach_gray; also return seg for label visibility."""
+    if isinstance(cam, WristCamera2):
+        gray, (_, _, seg) = capture_servo_rgbd_gray(cam, gui=gui, warmup=warmup, use_cache=False)
+        return gray, seg
+    if isinstance(cam, FixedCamera):
+        rgba, _, seg = fixed_render_rgbd(
+            cam, gui=gui, with_depth_seg=True, use_cache=False, warmup=warmup,
+        )
+        return _rgba_to_gray(rgba), seg
+    raise TypeError(f"unsupported camera: {type(cam)}")
+
+
 def save_teach_gray_png(gray: np.ndarray, png_path: str) -> str:
     parent = os.path.dirname(png_path)
     if parent:

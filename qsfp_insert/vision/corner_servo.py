@@ -92,8 +92,10 @@ def run_corner_servo(
     gui: bool = False,
     on_step: Callable[[], None] | None = None,
     align_method: AlignMethod | None = None,
+    refresh_every: int | None = None,
 ) -> tuple[bool, AlignmentMetrics | None]:
     """Servo until corner metrics converge or stall/timeout."""
+    every = GUI_SERVO_REFRESH_EVERY if refresh_every is None else max(1, refresh_every)
     stall = 0
     prev_px = float("inf")
     last_m: AlignmentMetrics | None = None
@@ -147,7 +149,7 @@ def run_corner_servo(
             twist = alignment_twist(m["dx"], m["dy"], m["standoff"], m["roll"], m["pitch"], m["yaw"])
         apply_cartesian_velocity(robot_id, peg, arm, twist)
         p.stepSimulation()
-        if on_step is not None and step % GUI_SERVO_REFRESH_EVERY == 0:
+        if on_step is not None and step % every == 0:
             on_step()
         elif gui:
             time.sleep(1.0 / 240.0)

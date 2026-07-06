@@ -9,6 +9,11 @@ import numpy as np
 import pybullet as p
 
 from constants import (
+    COLLECT_PERTURB_PITCH_RAD,
+    COLLECT_PERTURB_ROLL_RAD,
+    COLLECT_PERTURB_XY_M,
+    COLLECT_PERTURB_YAW_RAD,
+    COLLECT_PERTURB_Z_M,
     CORNER_SERVO_STANDOFF,
     PEG_L,
     PLATE_TOP_Z,
@@ -50,6 +55,18 @@ def sample_perturbation6(rng: random.Random) -> Perturbation6:
         "roll": rng.uniform(-PERTURB_ROLL_RAD, PERTURB_ROLL_RAD),
         "pitch": rng.uniform(-PERTURB_PITCH_RAD, PERTURB_PITCH_RAD),
         "yaw": rng.uniform(-PERTURB_YAW_RAD, PERTURB_YAW_RAD),
+    }
+
+
+def sample_collect_perturbation6(rng: random.Random) -> Perturbation6:
+    """Dataset / record_sim — wider than demo `sample_perturbation6`."""
+    return {
+        "dx": rng.uniform(-COLLECT_PERTURB_XY_M, COLLECT_PERTURB_XY_M),
+        "dy": rng.uniform(-COLLECT_PERTURB_XY_M, COLLECT_PERTURB_XY_M),
+        "dz": rng.uniform(-COLLECT_PERTURB_Z_M, COLLECT_PERTURB_Z_M),
+        "roll": rng.uniform(-COLLECT_PERTURB_ROLL_RAD, COLLECT_PERTURB_ROLL_RAD),
+        "pitch": rng.uniform(-COLLECT_PERTURB_PITCH_RAD, COLLECT_PERTURB_PITCH_RAD),
+        "yaw": rng.uniform(-COLLECT_PERTURB_YAW_RAD, COLLECT_PERTURB_YAW_RAD),
     }
 
 

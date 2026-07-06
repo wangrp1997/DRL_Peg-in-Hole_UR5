@@ -10,47 +10,63 @@
 | `--corners yolo` | YOLO Pose 推理（待训） |
 | `--infer-corner0` | 仅角 1–3 可见，角 0 平行四边形补全 |
 
-## 仿真采集（计划）
+## 仿真采集（wrist2）
 
-眼在手上：**peg + 相机固定**，动的是孔在图像里的位置。
+眼在手上：**peg + 相机固定**，孔在图像里随轨迹移动。
 
-### 正样本（孔在画内、可对齐）
+### 轨迹（接近真机）
 
-| 项 | 范围 |
-|----|------|
-| `hole_xy` | `HOLE_X_RANGE` × `HOLE_Y_RANGE` |
-| standoff Z | `COARSE_STANDOFF`(35mm) → `ALIGN_Z_NOMINAL`(6mm) 均匀随机 |
-| 6D 扰动 | 略大于 `run_eval` 的 `PERTURB_*`（xy/rpy 稍宽） |
-| 标注 | 孔 + 轴各 4 角；不可见角 `v=0` |
-| 保留 | peg 至少 3 角可见 |
+参考 `demo/corner_servo_align.py`，**不用**完整 `visp_flow`（无 teach / DVS）：
 
-### 负样本（孔出画 / 不可检）
+1. 随机 `hole_xy`
+2. IK 到 `COARSE_STANDOFF`（35 mm）
+3. 随机 6D 扰动（`COLLECT_PERTURB_*`：xy **±20 mm**、z **±10 mm**、roll/pitch **±0.14 rad**、yaw **±0.20 rad**，大于 demo）
+4. **Kabsch / IBVS 角点伺服** 直到对准成功
+5. 成功高度随机 **3.0–3.8 mm**，peg 可能挡住 1–2 个孔角 → 训练遮挡
 
-| 项 | 范围 |
-|----|------|
-| standoff Z | 高于 `COARSE_STANDOFF`（如 40–55mm） |
-| 或 xy | 大偏移，使孔口移出视野 |
-| 标注 | 孔 4 角全 `v=0`（或该帧不写 hole 行）；peg 仍标 |
+**暂不录「孔出画」负样本**；孔始终在视野内，部分角点可能因 peg 遮挡而 `v=0`。
 
-**正负比例：** 建议 **正:负 ≈ 4:1～5:1（负样本约 15–20%）**——纯 positive 也能训，但 coarse 搜孔阶段易在背景/peg 上误检孔角；少量负样本抑制假阳性，不必超过 30%。
+### 目录结构（Ultralytics YOLO）
 
-### 采集脚本（待实现）
-
-```bash
-# headless，输出 YOLO pose 数据集（images/ + labels/ + data.yaml）
-python qsfp_insert/corner_extract/collect_sim.py \
-  --count 4000 --seed 42 \
-  --pos-ratio 0.8 \
-  --out qsfp_insert/corner_extract/datasets/sim_wrist2
+```
+datasets/
+├── sim_wrist2_raw/              # 阶段 1：原始视频（不进 data.yaml）
+│   ├── videos/
+│   │   ├── align_sXXXX.mp4
+│   │   └── align_sXXXX.json
+│   └── record_meta.json
+└── sim_wrist2/                  # 阶段 2：YOLO 训练集
+    ├── data.yaml
+    ├── images/{train,val}/
+    ├── labels/{train,val}/
+    ├── previews/{train,val}/    # 角点叠图（调试用，保留在数据集内）
+    └── extract_meta.json
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--count` | 总帧数（正+负） |
-| `--pos-ratio` | 正样本占比，默认 0.8 |
-| `--out` | 数据集根目录（建议 gitignore） |
+### 阶段 1：录视频
 
-单帧流程：`load_scene` → 随机 hole_xy → IK 到目标 standoff → 6D 扰动 → `capture_teach_gray` 存 PNG → `gt_image_keypoints` 写 label → 校验 → 下一帧。
+```bash
+# 试录一条（--overwrite 只清空 raw 目录）
+python qsfp_insert/corner_extract/record_sim.py --seed 42 --overwrite
+
+# 批量录 20 条
+python qsfp_insert/corner_extract/record_sim.py --count 20 --seed 42 --overwrite
+
+# 追加录制（已有 mp4 则跳过）
+python qsfp_insert/corner_extract/record_sim.py --count 20 --seed 42
+```
+
+### 阶段 2：抽帧 + YOLO 标注
+
+按 **整条视频** 划分 train/val（默认 80/20），避免同轨迹帧泄漏。
+
+```bash
+python qsfp_insert/corner_extract/extract_video.py --stride 10 --clear --headless
+```
+
+### 旧脚本（独立随机位姿，已弃用主流程）
+
+`collect_sim.py` — 每帧跳随机位姿，**不等价真机连续轨迹**；保留作调试。
 
 ## 训练（后续）
 
