@@ -26,7 +26,7 @@ def run_one(
     rows = []
     for ep in range(1, episodes + 1):
         hole_xy = (rng.uniform(*HOLE_X_RANGE), rng.uniform(*HOLE_Y_RANGE))
-        _, report, _ = visp_flow_episode(
+        _, report, _, _ = visp_flow_episode(
             gui=False,
             hole_xy=hole_xy,
             rng=rng,

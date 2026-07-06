@@ -36,9 +36,11 @@ _gui_fixed = False
 _gui_wrist2 = False
 _wrist2_opencv = False
 _wrist2_last_rgba = None
+_fixed_last_rgba = None
 
 
 from sim.wrist2_render import rgba_is_blank, render_rgbd, reset_wrist2_render_cache, get_cached_rgbd
+from sim.fixed_render import render_rgbd as fixed_render_rgbd, get_cached_rgbd as get_fixed_cached_rgbd, reset_fixed_render_cache
 
 
 def urdf(name: str) -> str:
@@ -384,7 +386,12 @@ def show_fixed_camera_panel(get_keypoint_sets=None) -> None:
 
 def refresh_camera_views(get_keypoint_sets=None, *, render: bool = True) -> None:
     """One HARDWARE render per active cam; OpenCV reuses that buffer (fixed_cam pattern)."""
-    global _wrist2_last_rgba
+    try:
+        if not p.getConnectionInfo()["isConnected"]:
+            return
+    except Exception:
+        return
+    global _wrist2_last_rgba, _fixed_last_rgba
     wrist2_buf = None
     wrist_buf = None
     fixed_buf = None
@@ -400,7 +407,13 @@ def refresh_camera_views(get_keypoint_sets=None, *, render: bool = True) -> None
     elif _gui_wrist and _wrist_cam is not None and _gui_robot_id is not None:
         wrist_buf = _render_wrist_cam(True, for_opencv=False)
     elif _gui_fixed and _fixed_cam is not None:
-        fixed_buf = _fixed_cam.render(True, for_opencv=False)
+        if render:
+            out = fixed_render_rgbd(_fixed_cam, gui=True, with_depth_seg=True, use_cache=True, warmup=1)
+            fixed_buf = (out[0], out[1], out[2])
+        else:
+            cached = get_fixed_cached_rgbd()
+            if cached is not None:
+                fixed_buf = cached
 
     if _wrist2_opencv:
         sets = get_keypoint_sets() if get_keypoint_sets is not None else None
@@ -432,21 +445,42 @@ def refresh_camera_views(get_keypoint_sets=None, *, render: bool = True) -> None
     if _fixed_opencv:
         sets = get_keypoint_sets() if get_keypoint_sets is not None else None
         if fixed_buf is not None:
-            _show_panel(_FIXED_WINDOW, *fixed_buf, sets)
+            rgba, depth, seg = fixed_buf
+        elif not render:
+            cached = get_fixed_cached_rgbd()
+            if cached is not None:
+                rgba, depth, seg = cached
+            else:
+                rgba = depth = seg = None
         elif _fixed_cam is not None:
-            _show_panel(_FIXED_WINDOW, *_fixed_cam.render(True, for_opencv=True), sets)
+            out = fixed_render_rgbd(_fixed_cam, gui=True, with_depth_seg=True, use_cache=True, warmup=1)
+            rgba, depth, seg = out[0], out[1], out[2]
+        else:
+            rgba = depth = seg = None
+        if rgba is not None and not rgba_is_blank(rgba):
+            _fixed_last_rgba = (rgba, depth, seg)
+        elif _fixed_last_rgba is not None:
+            rgba, depth, seg = _fixed_last_rgba
+        if rgba is not None:
+            _show_panel(_FIXED_WINDOW, rgba, depth, seg, sets)
 
 
 def close_camera_windows() -> None:
     global _wrist_cam, _wrist_camera, _wrist_camera2, _gui_robot_id, _fixed_cam
-    global _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed, _gui_wrist2, _wrist2_opencv, _wrist2_last_rgba
+    global _wrist_opencv, _fixed_opencv, _gui_wrist, _gui_fixed, _gui_wrist2, _wrist2_opencv
+    global _wrist2_last_rgba, _fixed_last_rgba
     import cv2
 
-    for name in (_WRIST_WINDOW, _FIXED_WINDOW, _WRIST2_WINDOW):
-        try:
-            cv2.destroyWindow(name)
-        except cv2.error:
-            pass
+    try:
+        for name in (_WRIST_WINDOW, _FIXED_WINDOW, _WRIST2_WINDOW):
+            try:
+                cv2.destroyWindow(name)
+            except cv2.error:
+                pass
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+    except Exception:
+        pass
     _wrist_cam = None
     _wrist_camera = None
     _wrist_camera2 = None
@@ -459,7 +493,9 @@ def close_camera_windows() -> None:
     _gui_wrist2 = False
     _wrist2_opencv = False
     _wrist2_last_rgba = None
+    _fixed_last_rgba = None
     reset_wrist2_render_cache()
+    reset_fixed_render_cache()
 
 
 def settle(steps: int = 10, gui: bool = False) -> None:

@@ -183,6 +183,8 @@ def corner_servo_episode(
 
 def corner_servo_gui_idle(robot_id: int, peg: int, hole_id: int, infer_corner0: bool = False) -> None:
     """Keep GUI + keypoint overlay until PyBullet window is closed."""
+    from sim.gui_preview import gt_keypoint_gui_idle
+
     cam = get_fixed_camera()
 
     def _provider():
@@ -190,13 +192,8 @@ def corner_servo_gui_idle(robot_id: int, peg: int, hole_id: int, infer_corner0: 
             return None
         return gt_image_keypoints(cam, robot_id, peg, hole_id, infer_corner0=infer_corner0)
 
-    print("Close PyBullet window to exit.")
-    while p.getConnectionInfo()["isConnected"]:
-        p.stepSimulation()
-        kps = _provider()
-        sync_gt_corner_markers(robot_id, peg, hole_id, kps, cam)
-        refresh_camera_views(_provider)
-        time.sleep(1.0 / 240.0)
+    def _before():
+        sync_gt_corner_markers(robot_id, peg, hole_id, _provider(), cam)
+
+    gt_keypoint_gui_idle(robot_id, peg, hole_id, wrist2=False, before_refresh=_before)
     clear_gt_corner_markers()
-    close_camera_windows()
-    p.disconnect()

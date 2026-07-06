@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import random
-import time
 from typing import Any, Literal
 
 import pybullet as p
@@ -16,6 +15,7 @@ from sim.perturbation import (
     format_perturbation_log,
     sample_perturbation6,
 )
+from sim.gui_preview import is_pybullet_connected, pause_gui
 from sim.scene import (
     close_camera_windows,
     connect,
@@ -26,7 +26,6 @@ from sim.scene import (
     set_hole_opaque,
     setup_wrist_camera2_views,
 )
-from sim.wrist_camera2 import attach_wrist_camera2
 from visp_flow.visp_constants import COARSE_STANDOFF, VISP_DVS_START_ERR
 from visp_flow.dvs_fine import run_visp_dvs_fine
 from visp_flow.ibvs_coarse import run_pnp_preflight_for_ibvs, run_visp_ibvs_coarse
@@ -35,25 +34,10 @@ from visp_flow.require_visp import require_visp_python
 from visp_flow.teach import capture_aligned_teach, save_teach_bundle
 from vision.corners import gt_image_keypoints
 from vision.align import metrics_from_keypoints
+from sim.wrist_camera2 import attach_wrist_camera2
 
 CoarseMethod = Literal["kabsch", "ibvs"]
 PHASE_PAUSE_S = PERTURB_SERVO_PAUSE_S  # 3 s
-
-
-def _pause_gui(gui: bool, seconds: float, message: str, on_frame=None) -> None:
-    if not gui or seconds <= 0:
-        if message:
-            print(message)
-        return
-    print(message)
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if not p.getConnectionInfo()["isConnected"]:
-            break
-        p.stepSimulation()
-        if on_frame is not None:
-            on_frame()
-        time.sleep(1.0 / 240.0)
 
 
 def visp_flow_episode(
@@ -67,11 +51,14 @@ def visp_flow_episode(
     always_run_dvs: bool = False,
     dvs_start_err: float | None = None,
     dvs_abort_err: float | None = None,
-) -> tuple[bool, dict[str, Any], tuple[float, float]]:
+    gui_idle: bool = False,
+) -> tuple[bool, dict[str, Any], tuple[float, float], tuple[int, int, int, bool] | None]:
     require_visp_python()
 
     connect(gui)
-    robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(gui, hole_xy=hole_xy, opencv_render=False)
+    robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(
+        gui, hole_xy=hole_xy, opencv_render=opencv_render,
+    )
     if gui:
         set_hole_opaque(hole_id)
     hole_orn = p.getBasePositionAndOrientation(hole_id)[1]
@@ -86,11 +73,11 @@ def visp_flow_episode(
         return gt_image_keypoints(wrist_cam, robot_id, peg, hole_id)
 
     def _on_frame_corners():
-        if gui:
+        if gui and is_pybullet_connected():
             refresh_camera_views(_provider)
 
     def _on_frame_cam_only():
-        if gui:
+        if gui and is_pybullet_connected():
             refresh_camera_views(None, render=False)
 
     # A) IK standoff（episode 初始位）
@@ -142,11 +129,10 @@ def visp_flow_episode(
         print(format_perturbation_log(perturb))
 
     # D) 第一阶段：粗对准（角点可视化 ON）
-    _pause_gui(
-        gui,
+    pause_gui(
         PHASE_PAUSE_S,
         f"准备开始第一阶段伺服（粗对准 / {coarse_method}）…",
-        _on_frame_corners,
+        _on_frame_corners if gui else None,
     )
 
     coarse_ok = False
@@ -241,11 +227,10 @@ def visp_flow_episode(
     if dvs_skipped:
         print("第二阶段跳过: 第一阶段已对准")
     elif dvs_target is not None:
-        _pause_gui(
-            gui,
+        pause_gui(
             PHASE_PAUSE_S,
             "准备开始第二阶段伺服（ViSP 光度 DVS）…",
-            _on_frame_cam_only,
+            _on_frame_cam_only if gui else None,
         )
         dvs_ok, dvs_err, dvs_gated = run_visp_dvs_fine(
             robot_id,
@@ -294,15 +279,14 @@ def visp_flow_episode(
     if coarse_metrics is not None:
         report["coarse_metrics"] = coarse_metrics
 
-    if gui:
-        if dvs_skipped:
-            _pause_gui(
-                gui,
-                20.0,
-                "粗对准完成（跳过 DVS），查看终态…",
-                _on_frame_corners,
-            )
-        close_camera_windows()
-    wrist_cam.detach()
-    p.disconnect()
-    return aligned, report, hole_xy
+    if gui and gui_idle and dvs_skipped:
+        pause_gui(20.0, "粗对准完成（跳过 DVS），查看终态…", _on_frame_corners)
+
+    live = (robot_id, peg, hole_id, True) if (gui and gui_idle) else None
+    if live is None:
+        if gui:
+            close_camera_windows()
+        wrist_cam.detach()
+        if is_pybullet_connected():
+            p.disconnect()
+    return aligned, report, hole_xy, live

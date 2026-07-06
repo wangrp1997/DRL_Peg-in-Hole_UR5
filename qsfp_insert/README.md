@@ -71,11 +71,57 @@ python qsfp_insert/visp_flow/run_align.py --gui [--coarse-method kabsch|ibvs]
 python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch]
 ```
 
+## 模板 coarse（`template_flow/`）
+
+**独立目录，不修改 `visp_flow/`、`vision/corner_servo.py`。** 复用 `third_party/accelerated_features`（XFeat + `realtime_demo.py` 的 MNN / `match_xfeat` / homography 流程）做**运行时无 GT** 的角点 coarse，再调用 `run_kabsch_coarse`（与 `vision/corner_servo` 相同循环）。**固定相机仅 kabsch；IBVS coarse 需 wrist2。**
+
+### `--camera` 两种模式（**仅 `run_eval` / `run_diag` 走 XFeat**）
+
+| 参数 | 相机 | standoff | 示教 | 伺服（headless，`run_eval`） |
+|------|------|----------|------|------------------------------|
+| `fixed` | `fixed_cam` | `CORNER_SERVO_STANDOFF` | I* + 四角标定（仿真 GT 模拟点击）+ **XFeat ROI 描述子** | **孔**：示教 UV 不变<br>**peg**：XFeat ROI homography + `infer0` |
+| `wrist2` | `wrist_camera2` | `COARSE_STANDOFF` | 同上 | **peg**：示教 UV 不变<br>**孔**：XFeat ROI homography（搜索窗不上扩进 peg 区） |
+
+> **`run_align --gui --opencv`**：OpenCV 叠加 **XFeat 匹配角点**（每 `MATCH_EVERY_GUI` 步重匹配，中间帧保留上一帧 XFeat 结果）。示教阶段构建 ROI 模板。  
+> **`run_eval`**（headless）：纯 XFeat，中间步保留上一帧匹配结果，**不用 GT/几何补帧**。
+
+依赖：`third_party/accelerated_features/weights/xfeat.pt`（`run_eval` 首次运行加载）。
+
+### 运行
+
+```bash
+# GUI：OpenCV 显示 XFeat 角点（与 eval 同算法，无几何补帧）
+python qsfp_insert/template_flow/run_align.py --gui --opencv --seed 42 --camera fixed --coarse-method kabsch
+python qsfp_insert/template_flow/run_align.py --gui --opencv --seed 42 --camera wrist2 --coarse-method kabsch
+
+# headless 评测 / 单帧 diag
+python qsfp_insert/template_flow/run_eval.py --episodes 10 --seed 42 --camera fixed --coarse-method kabsch
+python qsfp_insert/template_flow/run_eval.py --episodes 10 --seed 42 --camera wrist2 --coarse-method kabsch
+python qsfp_insert/template_flow/run_diag.py --seed 42 --camera fixed   # 单帧角点 vs GT
+python qsfp_insert/template_flow/run_diag.py --seed 42 --camera wrist2
+```
+
+GUI 退出与 `visp_flow/run_align.py --gui --opencv` 相同：关 PyBullet；`--opencv` 时 `os._exit`。
+
+**`run_eval`**：仅 XFeat 角点 + 上一帧缓存，**无 GT/几何补帧**（此前 10/10 因补帧≈GT，已移除）。
+
+**纯 XFeat 单帧误差（`run_diag`，seed=42，扰动后）：**
+
+| 模式 | 示教侧 max err | XFeat 侧 max err |
+|------|----------------|------------------|
+| `fixed` | hole 0 px | peg **~37 px** |
+| `wrist2` | peg ~3 px | hole **~32 px** |
+
+**`run_eval` coarse 成功率（seed=42, kabsch, 10 轮，纯 XFeat 无补帧）**：fixed / wrist2 均 **0/10**。GT baseline：`visp_flow/run_eval.py` 10/10。
+
+结果 JSON → `outputs/template_flow_{camera}_kabsch_*.json`
+
 ## 目录
 
 | 路径 | 说明 |
 |------|------|
 | `demo/` | 早期 demo（fixed_cam 角点伺服等） |
+| `template_flow/` | **模板 coarse**（无运行时 GT，无 DVS） |
 | `visp_flow/` | **ViSP baseline**（wrist2，无近似） |
 | `sim/` | PyBullet 场景、相机、笛卡尔伺服 |
 | `vision/` | GT 角点、几何对准 |

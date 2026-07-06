@@ -23,6 +23,7 @@ from constants import (
 from geometry import AlignmentMetrics, metrics_converged, peg_tip_world
 from sim.cartesian_control import alignment_twist, apply_cartesian_velocity, stop_arm
 from sim.fixed_camera import FixedCamera
+from sim.gui_preview import is_pybullet_connected
 from vision.align import (
     AlignMethod,
     ibvs_pixel_error,
@@ -100,6 +101,8 @@ def run_corner_servo(
     stall_limit = IBVS_STALL_STEPS if use_ibvs else SERVO_STALL_STEPS
 
     for step in range(SERVO_MAX_STEPS):
+        if gui and not is_pybullet_connected():
+            break
         keypoints = keypoint_provider()
         if keypoints is None:
             break
@@ -151,8 +154,10 @@ def run_corner_servo(
 
     stop_arm(robot_id, arm)
     for _ in range(20):
+        if gui and not is_pybullet_connected():
+            break
         p.stepSimulation()
-        if on_step is not None:
+        if on_step is not None and is_pybullet_connected():
             on_step()
 
     if last_m is not None:
