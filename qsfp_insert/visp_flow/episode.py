@@ -33,7 +33,7 @@ from visp_flow.ibvs_coarse import run_pnp_preflight_for_ibvs, run_visp_ibvs_coar
 from visp_flow.kabsch_coarse import run_kabsch_coarse
 from visp_flow.require_visp import require_visp_python
 from visp_flow.teach import capture_aligned_teach, save_teach_bundle
-from vision.corners import gt_image_keypoints
+from corner_extract import CornerMode, make_keypoint_provider
 from vision.align import metrics_from_keypoints
 from sim.wrist_camera2 import attach_wrist_camera2
 
@@ -54,7 +54,9 @@ def visp_flow_episode(
     dvs_abort_err: float | None = None,
     gui_idle: bool = False,
     insert: bool = False,
-) -> tuple[bool, dict[str, Any], tuple[float, float], tuple[int, int, int, bool] | None]:
+    corners: CornerMode = "gt",
+    infer_corner0: bool = False,
+) -> tuple[bool, dict[str, Any], tuple[float, float], tuple | None]:
     require_visp_python()
 
     connect(gui)
@@ -71,9 +73,9 @@ def visp_flow_episode(
         register_wrist_camera2(wrist_cam)
         setup_wrist_camera2_views(True, opencv_render)
 
-    def _provider():
-        return gt_image_keypoints(wrist_cam, robot_id, peg, hole_id)
-
+    _provider = make_keypoint_provider(
+        corners, wrist_cam, robot_id, peg, hole_id, infer_corner0=infer_corner0,
+    )
     def _on_frame_corners():
         if gui and is_pybullet_connected():
             refresh_camera_views(_provider)
@@ -276,6 +278,8 @@ def visp_flow_episode(
     aligned = teach_ok and gt_ok and (dvs_ok if always_run_dvs or not coarse_ok else (dvs_skipped or dvs_ok))
 
     report: dict[str, Any] = {
+        "corners": corners,
+        "infer_corner0": infer_corner0,
         "coarse_method": coarse_method,
         "teach_ok": teach_ok,
         "coarse_ok": coarse_ok,
@@ -295,7 +299,7 @@ def visp_flow_episode(
     if coarse_metrics is not None:
         report["coarse_metrics"] = coarse_metrics
 
-    live = (robot_id, peg, hole_id, True) if (gui and gui_idle) else None
+    live = (robot_id, peg, hole_id, True, _provider) if (gui and gui_idle) else None
     if live is None:
         if gui:
             close_camera_windows()

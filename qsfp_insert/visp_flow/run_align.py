@@ -22,6 +22,17 @@ def main() -> int:
         action="store_true",
         help="After coarse alignment, continue descending to insert",
     )
+    ap.add_argument(
+        "--corners",
+        choices=("gt", "deeplsd", "yolo"),
+        default="gt",
+        help="Corner source: gt (sim projection), deeplsd, yolo",
+    )
+    ap.add_argument(
+        "--infer-corner0",
+        action="store_true",
+        help="Only corners 1–3 detected; infer corner 0 via parallelogram (sim GT test)",
+    )
     args = ap.parse_args()
 
     aligned, report, hole_xy, live = visp_flow_episode(
@@ -31,6 +42,8 @@ def main() -> int:
         coarse_method=args.coarse_method,
         gui_idle=args.gui,
         insert=args.insert,
+        corners=args.corners,  # type: ignore[arg-type]
+        infer_corner0=args.infer_corner0,
     )
     if args.insert:
         ok = bool(report.get("coarse_ok") and report.get("inserted"))
@@ -38,11 +51,12 @@ def main() -> int:
         ok = aligned
     code = 0 if ok else 1
     if live is not None:
-        rid, peg_i, hid, w2 = live
+        rid, peg_i, hid, w2, provider = live
         gt_keypoint_gui_idle(
             rid, peg_i, hid,
             wrist2=w2,
             detach_wrist2=True,
+            overlay_provider=provider,
             force_exit=code if args.opencv_render else None,
         )
     print(f"hole_xy={hole_xy} aligned={aligned}")

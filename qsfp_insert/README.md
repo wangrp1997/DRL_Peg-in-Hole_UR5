@@ -67,8 +67,23 @@ python3 -c "import photometric_servo; print('photometric ok')"
 ### 运行 / 评测
 
 ```bash
-python qsfp_insert/visp_flow/run_align.py --gui [--opencv] [--coarse-method kabsch|ibvs] [--insert]
-python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch] [--insert]
+python qsfp_insert/visp_flow/run_align.py --gui [--opencv] [--coarse-method kabsch|ibvs] [--insert] [--corners gt|deeplsd|yolo] [--infer-corner0]
+python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch] [--insert] [--corners gt|deeplsd|yolo] [--infer-corner0]
+```
+
+### 角点来源（`corner_extract/`）
+
+| 参数 | 说明 |
+|------|------|
+| `--corners gt` | 仿真 3D 投影角点（默认，真机待换 yolo/deeplsd） |
+| `--corners deeplsd` / `yolo` | 占位，未实现 |
+| `--infer-corner0` | 仅角 1–3 可见，角 0 平行四边形补全，验 3+1→Kabsch |
+
+```bash
+# 默认 GT 四角
+python qsfp_insert/visp_flow/run_align.py --seed 42 --corners gt --coarse-method kabsch
+# 仿真验「3 点 + 补第 4 角」（GUI 下角 0 洋红）
+python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 --corners gt --infer-corner0
 ```
 
 ## 模板 coarse（`template_flow/`）
@@ -122,6 +137,7 @@ GUI 退出与 `visp_flow/run_align.py --gui --opencv` 相同：关 PyBullet；`-
 |------|------|
 | `demo/` | 早期 demo（fixed_cam 角点伺服等） |
 | `template_flow/` | **模板 coarse**（无运行时 GT，无 DVS） |
+| `corner_extract/` | 角点 provider（`--corners`） |
 | `visp_flow/` | **ViSP baseline**（wrist2，无近似） |
 | `sim/` | PyBullet 场景、相机、笛卡尔伺服 |
 | `vision/` | GT 角点、几何对准 |

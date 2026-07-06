@@ -18,7 +18,16 @@ def sample_hole_xy(rng: random.Random) -> tuple[float, float]:
     return (rng.uniform(*HOLE_X_RANGE), rng.uniform(*HOLE_Y_RANGE))
 
 
-def run(episodes: int, seed: int, output_dir: str, coarse_method: str, insert: bool) -> dict:
+def run(
+    episodes: int,
+    seed: int,
+    output_dir: str,
+    coarse_method: str,
+    insert: bool,
+    *,
+    corners: str = "gt",
+    infer_corner0: bool = False,
+) -> dict:
     rng = random.Random(seed)
     rows = []
     ok = 0
@@ -31,6 +40,8 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str, insert: b
             rng=rng,
             coarse_method=coarse_method,  # type: ignore[arg-type]
             insert=insert,
+            corners=corners,  # type: ignore[arg-type]
+            infer_corner0=infer_corner0,
         )
         if insert:
             success = bool(report.get("coarse_ok") and report.get("inserted"))
@@ -51,6 +62,8 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str, insert: b
             "dvs_err": report.get("dvs_err"),
             "coarse_method": coarse_method,
             "insert": insert,
+            "corners": corners,
+            "infer_corner0": infer_corner0,
         }
         if m:
             row.update({
@@ -83,6 +96,8 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str, insert: b
         "seed": seed,
         "coarse_method": coarse_method,
         "insert": insert,
+        "corners": corners,
+        "infer_corner0": infer_corner0,
         "hole_x_range": list(HOLE_X_RANGE),
         "hole_y_range": list(HOLE_Y_RANGE),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -109,7 +124,26 @@ if __name__ == "__main__":
         action="store_true",
         help="After coarse alignment, descend to insert; count coarse+insert success",
     )
+    ap.add_argument(
+        "--corners",
+        choices=("gt", "deeplsd", "yolo"),
+        default="gt",
+        help="Corner source: gt (sim projection), deeplsd, yolo",
+    )
+    ap.add_argument(
+        "--infer-corner0",
+        action="store_true",
+        help="Only corners 1–3 visible; infer corner 0 via parallelogram (sim test)",
+    )
     ap.add_argument("--output-dir", default=os.path.join(REPO_ROOT, "outputs"))
     args = ap.parse_args()
-    summary = run(args.episodes, args.seed, args.output_dir, args.coarse_method, args.insert)
+    summary = run(
+        args.episodes,
+        args.seed,
+        args.output_dir,
+        args.coarse_method,
+        args.insert,
+        corners=args.corners,
+        infer_corner0=args.infer_corner0,
+    )
     sys.exit(0 if summary["failures"] == 0 else 1)
