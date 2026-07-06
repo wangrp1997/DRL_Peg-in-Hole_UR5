@@ -5,12 +5,11 @@ import json
 import os
 from datetime import datetime, timezone
 
-import cv2
 import numpy as np
 import pybullet as p
 
-from sim.wrist2_render import render_grayscale
 from sim.wrist_camera2 import WristCamera2, attach_wrist_camera2
+from vision.teach_image import capture_teach_gray, save_teach_gray_png
 
 DEFAULT_DVS_TARGET_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -58,7 +57,7 @@ def save_dvs_target_image(
     png_path = os.path.join(out_dir, f"{stem}.png")
     json_path = os.path.join(out_dir, f"{stem}.json")
 
-    cv2.imwrite(png_path, gray)
+    save_teach_gray_png(gray, png_path)
     meta = {
         "format": "gray8_png",
         "width": int(gray.shape[1]),

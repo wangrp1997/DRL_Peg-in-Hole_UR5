@@ -67,8 +67,8 @@ python3 -c "import photometric_servo; print('photometric ok')"
 ### 运行 / 评测
 
 ```bash
-python qsfp_insert/visp_flow/run_align.py --gui [--coarse-method kabsch|ibvs]
-python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch]
+python qsfp_insert/visp_flow/run_align.py --gui [--opencv] [--coarse-method kabsch|ibvs] [--insert]
+python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch] [--insert]
 ```
 
 ## 模板 coarse（`template_flow/`）

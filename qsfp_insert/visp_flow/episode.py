@@ -23,6 +23,7 @@ from sim.scene import (
     move_tip_to_standoff,
     refresh_camera_views,
     register_wrist_camera2,
+    run_insert_after_align,
     set_hole_opaque,
     setup_wrist_camera2_views,
 )
@@ -52,6 +53,7 @@ def visp_flow_episode(
     dvs_start_err: float | None = None,
     dvs_abort_err: float | None = None,
     gui_idle: bool = False,
+    insert: bool = False,
 ) -> tuple[bool, dict[str, Any], tuple[float, float], tuple[int, int, int, bool] | None]:
     require_visp_python()
 
@@ -226,6 +228,8 @@ def visp_flow_episode(
     dvs_skipped = coarse_ok and not always_run_dvs
     if dvs_skipped:
         print("第二阶段跳过: 第一阶段已对准")
+        if gui and gui_idle and not insert:
+            pause_gui(20.0, "粗对准完成（跳过 DVS），查看终态…", _on_frame_corners)
     elif dvs_target is not None:
         pause_gui(
             PHASE_PAUSE_S,
@@ -256,6 +260,15 @@ def visp_flow_episode(
     else:
         print("第二阶段跳过: 无 I*")
 
+    inserted: bool | None = None
+    if insert and coarse_ok:
+        inserted = run_insert_after_align(robot_id, arm, eef, peg, hole_xy, gui=gui)
+        print(f"插入: {'ok' if inserted else 'fail'}")
+        if gui:
+            _on_frame_corners()
+        if gui and gui_idle:
+            pause_gui(20.0, "插入完成，查看终态…", _on_frame_corners)
+
     tip = peg_tip_world(robot_id, peg)
     peg_orn = p.getLinkState(robot_id, peg)[1]
     mf = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
@@ -266,6 +279,7 @@ def visp_flow_episode(
         "coarse_method": coarse_method,
         "teach_ok": teach_ok,
         "coarse_ok": coarse_ok,
+        "insert": insert,
         "dvs_ok": dvs_ok,
         "dvs_skipped": dvs_skipped,
         "dvs_gated": dvs_gated,
@@ -276,11 +290,10 @@ def visp_flow_episode(
         "aligned": aligned,
         "gt_aligned": gt_ok,
     }
+    if inserted is not None:
+        report["inserted"] = inserted
     if coarse_metrics is not None:
         report["coarse_metrics"] = coarse_metrics
-
-    if gui and gui_idle and dvs_skipped:
-        pause_gui(20.0, "粗对准完成（跳过 DVS），查看终态…", _on_frame_corners)
 
     live = (robot_id, peg, hole_id, True) if (gui and gui_idle) else None
     if live is None:

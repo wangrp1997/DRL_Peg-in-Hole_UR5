@@ -18,7 +18,7 @@ def sample_hole_xy(rng: random.Random) -> tuple[float, float]:
     return (rng.uniform(*HOLE_X_RANGE), rng.uniform(*HOLE_Y_RANGE))
 
 
-def run(episodes: int, seed: int, output_dir: str, coarse_method: str) -> dict:
+def run(episodes: int, seed: int, output_dir: str, coarse_method: str, insert: bool) -> dict:
     rng = random.Random(seed)
     rows = []
     ok = 0
@@ -30,8 +30,12 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str) -> dict:
             hole_xy=hole_xy,
             rng=rng,
             coarse_method=coarse_method,  # type: ignore[arg-type]
+            insert=insert,
         )
-        success = bool(aligned and report.get("gt_aligned"))
+        if insert:
+            success = bool(report.get("coarse_ok") and report.get("inserted"))
+        else:
+            success = bool(aligned and report.get("gt_aligned"))
         ok += int(success)
         m = report.get("metrics") or {}
         row = {
@@ -41,10 +45,12 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str) -> dict:
             "aligned": aligned,
             "success": success,
             "coarse_ok": report.get("coarse_ok"),
+            "inserted": report.get("inserted"),
             "dvs_ok": report.get("dvs_ok"),
             "dvs_gated": report.get("dvs_gated"),
             "dvs_err": report.get("dvs_err"),
             "coarse_method": coarse_method,
+            "insert": insert,
         }
         if m:
             row.update({
@@ -53,20 +59,30 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str) -> dict:
                 "standoff_mm": round(m.get("standoff", 0) * 1e3, 3),
             })
         rows.append(row)
+        if insert:
+            status = (
+                "insert ok" if success
+                else f"coarse={'ok' if report.get('coarse_ok') else 'fail'} "
+                     f"insert={'ok' if report.get('inserted') else 'fail'}"
+            )
+        else:
+            status = "success" if success else "fail"
         print(
             f"[{ep}/{episodes}] hole=({hole_xy[0]:.3f},{hole_xy[1]:.3f}) "
-            f"coarse={report.get('coarse_ok')} dvs={report.get('dvs_ok')} success={success}"
+            f"coarse={report.get('coarse_ok')} dvs={report.get('dvs_ok')} {status}"
         )
 
     rate = ok / episodes * 100
+    label = "visp_insert" if insert else "visp_baseline"
     summary = {
-        "mode": "visp_baseline",
+        "mode": label,
         "episodes": episodes,
         "successes": ok,
         "failures": episodes - ok,
         "success_rate_pct": round(rate, 1),
         "seed": seed,
         "coarse_method": coarse_method,
+        "insert": insert,
         "hole_x_range": list(HOLE_X_RANGE),
         "hole_y_range": list(HOLE_Y_RANGE),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -74,7 +90,8 @@ def run(episodes: int, seed: int, output_dir: str, coarse_method: str) -> dict:
     }
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = os.path.join(output_dir, f"visp_flow_eval_{ts}.json")
+    suffix = "_insert" if insert else ""
+    out = os.path.join(output_dir, f"visp_flow_eval{suffix}_{ts}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     print(f"\n{ok}/{episodes} = {rate:.1f}% -> {out}")
@@ -87,7 +104,12 @@ if __name__ == "__main__":
     ap.add_argument("--episodes", type=int, default=10)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--coarse-method", choices=("kabsch", "ibvs"), default="kabsch")
+    ap.add_argument(
+        "--insert",
+        action="store_true",
+        help="After coarse alignment, descend to insert; count coarse+insert success",
+    )
     ap.add_argument("--output-dir", default=os.path.join(REPO_ROOT, "outputs"))
     args = ap.parse_args()
-    summary = run(args.episodes, args.seed, args.output_dir, args.coarse_method)
+    summary = run(args.episodes, args.seed, args.output_dir, args.coarse_method, args.insert)
     sys.exit(0 if summary["failures"] == 0 else 1)

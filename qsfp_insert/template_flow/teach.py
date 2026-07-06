@@ -6,12 +6,9 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import cv2
-
 from constants import PEG_W, PEG_H
-from sim.fixed_render import render_grayscale as render_fixed_gray
-from sim.wrist2_render import render_grayscale as render_wrist2_gray
 from template_flow._paths import TEACH_DIR
+from vision.teach_image import capture_teach_gray, save_teach_gray_png
 from visp_flow.ibvs_coarse import IbvsDesiredFeatures
 from template_flow.match_teach import build_roi_crop_ref, gray_to_bgr
 from template_flow.tuning import ZONE_MARGIN
@@ -66,11 +63,7 @@ def capture_template_bundle(
         return None
     hole_kp, peg_kp = marked
     if gray is None:
-        gray = (
-            render_wrist2_gray(cam, gui=gui, warmup=2)
-            if camera == "wrist2"
-            else render_fixed_gray(cam, gui=gui, warmup=2)
-        )
+        gray = capture_teach_gray(cam, gui=gui, warmup=2)
     ref_bgr = gray_to_bgr(gray)
     if camera == "wrist2":
         peg_bottom = max(v for _, v in peg_kp.uv)
@@ -106,7 +99,7 @@ def save_template_bundle(
     os.makedirs(out_dir, exist_ok=True)
     png_path = os.path.join(out_dir, f"{TEACH_STEM}.png")
     json_path = os.path.join(out_dir, f"{TEACH_STEM}.json")
-    cv2.imwrite(png_path, bundle.gray)
+    save_teach_gray_png(bundle.gray, png_path)
     if tracker is None:
         if bundle.camera == "wrist2":
             tracker = "peg=teach_uv; hole=XFeat ROI (realtime_demo.py)"
