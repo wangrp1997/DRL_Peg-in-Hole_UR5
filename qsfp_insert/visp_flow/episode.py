@@ -77,6 +77,8 @@ def visp_flow_episode(
     insert: bool = False,
     corners: CornerMode = "gt",
     infer_corner0: bool = False,
+    lock_hole_corners: bool = False,
+    skip_hole_h0: bool = False,
 ) -> tuple[bool, dict[str, Any], tuple[float, float], tuple | None]:
     require_visp_python()
 
@@ -158,6 +160,19 @@ def visp_flow_episode(
         )
         _on_frame_corners()
         print(format_perturbation_log(perturb))
+
+    if lock_hole_corners:
+        _provider = make_keypoint_provider(
+            corners,
+            wrist_cam,
+            robot_id,
+            peg,
+            hole_id,
+            infer_corner0=infer_corner0,
+            lock_hole_corners=True,
+            skip_hole_h0=skip_hole_h0,
+            gui=gui,
+        )
 
     # D) 第一阶段：粗对准（角点可视化 ON）
     pause_gui(
@@ -320,6 +335,8 @@ def visp_flow_episode(
     report: dict[str, Any] = {
         "corners": corners,
         "infer_corner0": infer_corner0,
+        "lock_hole_corners": lock_hole_corners,
+        "skip_hole_h0": skip_hole_h0,
         "coarse_method": coarse_method,
         "teach_ok": teach_ok,
         "coarse_ok": coarse_ok,

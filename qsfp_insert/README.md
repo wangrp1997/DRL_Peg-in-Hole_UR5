@@ -70,7 +70,24 @@ python3 -c "import photometric_servo; print('photometric ok')"
 python qsfp_insert/visp_flow/run_align.py --gui [--opencv] [--coarse-method kabsch|ibvs] [--insert] [--corners gt|deeplsd|yolo] [--infer-corner0]
 python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch] [--insert] [--corners gt|deeplsd|yolo] [--infer-corner0]
 ```
-YOLO 插孔（GUI 看角点 + GT 未准时自动进 DVS）：`export PYTHONPATH=$PWD/qsfp_insert:$PWD:$PYTHONPATH && python qsfp_insert/visp_flow/run_align.py --gui --opencv --corners yolo --infer-corner0`（权重默认 `QSFP_YOLO_WEIGHTS`，未设则用 `~/Projects/ultralytics/runs/pose/qsfp_insert/.../best.pt`）
+
+YOLO 插孔（GUI 看角点；视觉收敛但 GT 未准时自动进 DVS）。权重：`QSFP_YOLO_WEIGHTS`，未设则 `~/Projects/ultralytics/runs/pose/qsfp_insert/.../best.pt`。
+
+```bash
+export PYTHONPATH=$PWD/qsfp_insert:$PWD:$PYTHONPATH
+
+# 基线
+python qsfp_insert/visp_flow/run_align.py --gui --opencv --corners yolo --infer-corner0
+
+# 扰动后首帧锁 hole 世界四角，peg 仍实时 YOLO（减轻 H1 漂移）
+python qsfp_insert/visp_flow/run_align.py --gui --opencv --corners yolo --infer-corner0 --lock-hole-corners
+
+# 插孔成功率60%（粗对准 ok 且插入成功）加 --insert：
+python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 --corners yolo --infer-corner0 --lock-hole-corners --insert
+
+# 上者 + 锁孔时仅用 H1–H3 + 19×9 mm IPPE 补 H0（常压 roll，xy 可能变差）
+python qsfp_insert/visp_flow/run_align.py --gui --opencv --corners yolo --infer-corner0 --lock-hole-corners --skip-hole-h0
+```
 
 ### 角点来源（`corner_extract/`）
 

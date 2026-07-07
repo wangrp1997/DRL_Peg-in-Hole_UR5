@@ -24,7 +24,15 @@ from constants import (
 )
 from geometry import AlignmentMetrics, metrics_converged, rpy_error
 from sim.fixed_camera import FixedCamera
-from vision.corners import HOLE_HALF_X, HOLE_HALF_Y, ImageKeypoints, ProjectorCam
+from dataclasses import replace
+
+from vision.corners import (
+    HOLE_HALF_X,
+    HOLE_HALF_Y,
+    ImageKeypoints,
+    hole_pose_corners_ok,
+    ProjectorCam,
+)
 
 AlignMethod = Literal["kabsch", "ibvs"]
 
@@ -388,6 +396,34 @@ def _solve_planar_pose(
         return None
     rot_c, _ = cv2.Rodrigues(rvec)
     return rot_c, tvec.reshape(3)
+
+
+def refine_hole_corners_h123(kp: ImageKeypoints, cam: FixedCamera) -> ImageKeypoints | None:
+    """Hole lock/pose from H1–H3 + 19×9 mm IPPE; H0 from rectangle reprojection."""
+    if kp.name != "hole" or not hole_pose_corners_ok(kp):
+        return None
+    uv = list(kp.uv)
+    u0 = uv[1][0] + uv[3][0] - uv[2][0]
+    v0 = uv[1][1] + uv[3][1] - uv[2][1]
+    if not (math.isfinite(u0) and math.isfinite(v0)):
+        return None
+    uv[0] = (u0, v0)
+    obj = _rect_object_points(HOLE_HALF_X, HOLE_HALF_Y)
+    pose = _solve_planar_pose(uv, obj, cam, [1, 2, 3])
+    if pose is None:
+        return None
+    rot_c, tvec = pose
+    dist = np.zeros(5, dtype=np.float64)
+    rvec, _ = cv2.Rodrigues(rot_c)
+    proj, _ = cv2.projectPoints(obj, rvec, tvec.reshape(3, 1), cam.K, dist)
+    refined = [(float(proj[i, 0, 0]), float(proj[i, 0, 1])) for i in range(4)]
+    visible = [
+        math.isfinite(u) and math.isfinite(v) and 0.0 <= u < cam.width and 0.0 <= v < cam.height
+        for u, v in refined
+    ]
+    if sum(visible) < 4:
+        return None
+    return replace(kp, uv=refined, visible=visible, inferred=(True, False, False, False))
 
 
 def _planar_pose_indices(kp: ImageKeypoints) -> tuple[list[int], list[int]] | None:

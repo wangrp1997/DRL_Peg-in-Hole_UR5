@@ -28,6 +28,8 @@ def run(
     *,
     corners: str = "gt",
     infer_corner0: bool = False,
+    lock_hole_corners: bool = False,
+    skip_hole_h0: bool = False,
 ) -> dict:
     rng = random.Random(seed)
     rows = []
@@ -43,6 +45,8 @@ def run(
             insert=insert,
             corners=corners,  # type: ignore[arg-type]
             infer_corner0=infer_corner0,
+            lock_hole_corners=lock_hole_corners,
+            skip_hole_h0=skip_hole_h0,
         )
         if insert:
             success = bool(report.get("coarse_ok") and report.get("inserted"))
@@ -65,6 +69,8 @@ def run(
             "insert": insert,
             "corners": corners,
             "infer_corner0": infer_corner0,
+            "lock_hole_corners": lock_hole_corners,
+            "skip_hole_h0": skip_hole_h0,
         }
         if m:
             row.update({
@@ -112,6 +118,8 @@ def run(
         "insert": insert,
         "corners": corners,
         "infer_corner0": infer_corner0,
+        "lock_hole_corners": lock_hole_corners,
+        "skip_hole_h0": skip_hole_h0,
         "hole_x_range": list(HOLE_X_RANGE),
         "hole_y_range": list(HOLE_Y_RANGE),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -149,6 +157,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Only corners 1–3 visible; infer corner 0 via parallelogram (sim test)",
     )
+    ap.add_argument(
+        "--lock-hole-corners",
+        action="store_true",
+        help="After perturb, freeze hole world corners from first frame; peg stays live YOLO",
+    )
+    ap.add_argument(
+        "--skip-hole-h0",
+        action="store_true",
+        help="With --lock-hole-corners: lock from H1–H3 + parallelogram H0 (ignore YOLO H0)",
+    )
     ap.add_argument("--output-dir", default=os.path.join(REPO_ROOT, "outputs"))
     args = ap.parse_args()
     summary = run(
@@ -159,5 +177,7 @@ if __name__ == "__main__":
         args.insert,
         corners=args.corners,
         infer_corner0=args.infer_corner0,
+        lock_hole_corners=args.lock_hole_corners,
+        skip_hole_h0=args.skip_hole_h0,
     )
     sys.exit(0 if summary["failures"] == 0 else 1)

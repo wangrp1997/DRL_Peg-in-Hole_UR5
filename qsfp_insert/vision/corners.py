@@ -18,6 +18,8 @@ HOLE_HALF_X = 0.0095
 HOLE_HALF_Y = 0.0045
 HOLE_MOUTH_Z_LOCAL = HOLE_DEPTH / 2.0
 
+HOLE_POSE_CORNER_INDICES = (1, 2, 3)
+
 # BGR for OpenCV overlay when corner 0 is inferred from 1–3 (not directly detected).
 INFERRED_COLOR_BGR = (255, 0, 255)
 INFERRED_MARKER_COLOR = (1.0, 0.0, 1.0)
@@ -40,6 +42,10 @@ def _link_to_world(body_id: int, link_index: int, local: tuple[float, float, flo
         pos, orn = p.getLinkState(body_id, link_index)[:2]
     world, _ = p.multiplyTransforms(pos, orn, local, [0.0, 0.0, 0.0, 1.0])
     return world
+
+
+def hole_pose_corners_ok(kp: ImageKeypoints) -> bool:
+    return all(kp.visible[i] for i in HOLE_POSE_CORNER_INDICES)
 
 
 def hole_corners_local() -> list[tuple[float, float, float]]:

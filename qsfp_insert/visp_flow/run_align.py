@@ -33,6 +33,16 @@ def main() -> int:
         action="store_true",
         help="Only corners 1–3 detected; infer corner 0 via parallelogram (sim GT test)",
     )
+    ap.add_argument(
+        "--lock-hole-corners",
+        action="store_true",
+        help="After perturb, freeze hole world corners from first frame; peg stays live YOLO",
+    )
+    ap.add_argument(
+        "--skip-hole-h0",
+        action="store_true",
+        help="With --lock-hole-corners: lock from H1–H3 + parallelogram H0 (ignore YOLO H0)",
+    )
     args = ap.parse_args()
 
     aligned, report, hole_xy, live = visp_flow_episode(
@@ -44,6 +54,8 @@ def main() -> int:
         insert=args.insert,
         corners=args.corners,  # type: ignore[arg-type]
         infer_corner0=args.infer_corner0,
+        lock_hole_corners=args.lock_hole_corners,
+        skip_hole_h0=args.skip_hole_h0,
     )
     if args.insert:
         ok = bool(report.get("coarse_ok") and report.get("inserted"))
