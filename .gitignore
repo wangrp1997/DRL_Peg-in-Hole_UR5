@@ -13,6 +13,9 @@ env/
 
 # Local run artifacts
 outputs/
+# Ultralytics 预训练权重（首次 train 会自动下载，勿提交）
+yolo*.pt
+qsfp_insert/yolo*.pt
 qsfp_insert/teach/dvs_targets/*
 !qsfp_insert/teach/dvs_targets/.gitkeep
 qsfp_insert/visp_flow/teach/*

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -70,6 +71,9 @@ def run(
                 "dx_mm": round(m.get("dx", 0) * 1e3, 3),
                 "dy_mm": round(m.get("dy", 0) * 1e3, 3),
                 "standoff_mm": round(m.get("standoff", 0) * 1e3, 3),
+                "roll_deg": round(math.degrees(m.get("roll", 0)), 3),
+                "pitch_deg": round(math.degrees(m.get("pitch", 0)), 3),
+                "yaw_deg": round(math.degrees(m.get("yaw", 0)), 3),
             })
         rows.append(row)
         if insert:
@@ -80,9 +84,19 @@ def run(
             )
         else:
             status = "success" if success else "fail"
+        m = report.get("metrics") or {}
+        gt_flag = "ok" if report.get("gt_aligned") else "fail"
+        rpy = ""
+        if m:
+            rpy = (
+                f" GT_rpy=({math.degrees(m.get('roll', 0)):+.2f}°, "
+                f"{math.degrees(m.get('pitch', 0)):+.2f}°, "
+                f"{math.degrees(m.get('yaw', 0)):+.2f}°)"
+            )
         print(
             f"[{ep}/{episodes}] hole=({hole_xy[0]:.3f},{hole_xy[1]:.3f}) "
-            f"coarse={report.get('coarse_ok')} dvs={report.get('dvs_ok')} {status}"
+            f"视觉粗对准={report.get('coarse_ok')} GT={gt_flag} dvs={report.get('dvs_ok')} {status}"
+            f"{rpy}"
         )
 
     rate = ok / episodes * 100

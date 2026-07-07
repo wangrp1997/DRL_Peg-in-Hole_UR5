@@ -1,6 +1,7 @@
 """ViSP baseline episode — same rhythm as corner_servo demo."""
 from __future__ import annotations
 
+import math
 import random
 from typing import Any, Literal
 
@@ -41,6 +42,26 @@ CoarseMethod = Literal["kabsch", "ibvs"]
 PHASE_PAUSE_S = PERTURB_SERVO_PAUSE_S  # 3 s
 
 
+def _fmt_align(ok: bool, m: dict[str, Any] | None) -> str:
+    flag = "ok" if ok else "fail"
+    if m is None:
+        return flag
+    roll_d = math.degrees(m["roll"])
+    pitch_d = math.degrees(m["pitch"])
+    yaw_d = math.degrees(m["yaw"])
+    return (
+        f"{flag} (dx={m['dx'] * 1e3:+.2f}mm dy={m['dy'] * 1e3:+.2f}mm "
+        f"standoff={m['standoff'] * 1e3:.2f}mm "
+        f"rpy=({roll_d:+.2f}°, {pitch_d:+.2f}°, {yaw_d:+.2f}°))"
+    )
+
+
+def _gt_metrics(robot_id: int, peg: int, hole_xy: tuple[float, float], hole_orn) -> dict[str, Any]:
+    tip = peg_tip_world(robot_id, peg)
+    peg_orn = p.getLinkState(robot_id, peg)[1]
+    return alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
+
+
 def visp_flow_episode(
     gui: bool = False,
     hole_xy: tuple[float, float] | None = None,
@@ -74,7 +95,13 @@ def visp_flow_episode(
         setup_wrist_camera2_views(True, opencv_render)
 
     _provider = make_keypoint_provider(
-        corners, wrist_cam, robot_id, peg, hole_id, infer_corner0=infer_corner0,
+        corners,
+        wrist_cam,
+        robot_id,
+        peg,
+        hole_id,
+        infer_corner0=infer_corner0,
+        gui=gui,
     )
     def _on_frame_corners():
         if gui and is_pybullet_connected():
@@ -222,17 +249,27 @@ def visp_flow_episode(
                 gui=gui,
                 on_step=_on_frame_corners if gui else None,
             )
-    print(f"第一阶段结束: coarse ({coarse_method}) ok={coarse_ok}")
+    gt_after_coarse = _gt_metrics(robot_id, peg, hole_xy, hole_orn)
+    gt_coarse_ok = metrics_converged(gt_after_coarse)
+    print(f"第一阶段结束 ({coarse_method}):")
+    print(f"  视觉对准(角点伺服)={_fmt_align(coarse_ok, coarse_metrics)}")
+    print(f"  GT对准(仿真真值)={_fmt_align(gt_coarse_ok, gt_after_coarse)}")
 
     dvs_ok = False
     dvs_err = 0.0
     dvs_gated = False
-    dvs_skipped = coarse_ok and not always_run_dvs
+    # Skip DVS only when GT already converged after coarse (not merely visual coarse_ok).
+    dvs_skipped = (not always_run_dvs) and gt_coarse_ok
     if dvs_skipped:
-        print("第二阶段跳过: 第一阶段已对准")
+        print(
+            f"第二阶段跳过: GT 已对准"
+            f"（视觉粗对准={'ok' if coarse_ok else 'fail'}）"
+        )
         if gui and gui_idle and not insert:
-            pause_gui(20.0, "粗对准完成（跳过 DVS），查看终态…", _on_frame_corners)
+            pause_gui(20.0, "粗对准完成（GT ok，跳过 DVS），查看终态…", _on_frame_corners)
     elif dvs_target is not None:
+        if coarse_ok and not gt_coarse_ok:
+            print("第二阶段启动: 视觉已收敛但 GT 未对准，进入 ViSP DVS 细调")
         pause_gui(
             PHASE_PAUSE_S,
             "准备开始第二阶段伺服（ViSP 光度 DVS）…",
@@ -275,7 +312,10 @@ def visp_flow_episode(
     peg_orn = p.getLinkState(robot_id, peg)[1]
     mf = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
     gt_ok = metrics_converged(mf)
-    aligned = teach_ok and gt_ok and (dvs_ok if always_run_dvs or not coarse_ok else (dvs_skipped or dvs_ok))
+    aligned = teach_ok and gt_ok and (
+        dvs_ok if always_run_dvs else (dvs_skipped or dvs_ok)
+    )
+    print(f"终态: 视觉粗对准={'ok' if coarse_ok else 'fail'}, GT对准={_fmt_align(gt_ok, mf)}")
 
     report: dict[str, Any] = {
         "corners": corners,
@@ -283,6 +323,7 @@ def visp_flow_episode(
         "coarse_method": coarse_method,
         "teach_ok": teach_ok,
         "coarse_ok": coarse_ok,
+        "gt_coarse_ok": gt_coarse_ok,
         "insert": insert,
         "dvs_ok": dvs_ok,
         "dvs_skipped": dvs_skipped,

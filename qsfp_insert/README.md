@@ -70,14 +70,16 @@ python3 -c "import photometric_servo; print('photometric ok')"
 python qsfp_insert/visp_flow/run_align.py --gui [--opencv] [--coarse-method kabsch|ibvs] [--insert] [--corners gt|deeplsd|yolo] [--infer-corner0]
 python qsfp_insert/visp_flow/run_eval.py --episodes 10 --seed 42 [--coarse-method kabsch] [--insert] [--corners gt|deeplsd|yolo] [--infer-corner0]
 ```
+YOLO 插孔（GUI 看角点 + GT 未准时自动进 DVS）：`export PYTHONPATH=$PWD/qsfp_insert:$PWD:$PYTHONPATH && python qsfp_insert/visp_flow/run_align.py --gui --opencv --corners yolo --infer-corner0`（权重默认 `QSFP_YOLO_WEIGHTS`，未设则用 `~/Projects/ultralytics/runs/pose/qsfp_insert/.../best.pt`）
 
 ### 角点来源（`corner_extract/`）
 
 | 参数 | 说明 |
 |------|------|
 | `--corners gt` | 仿真 3D 投影角点（默认，真机待换 yolo/deeplsd） |
-| `--corners deeplsd` / `yolo` | 占位，未实现 |
-| `--infer-corner0` | 仅角 1–3 可见，角 0 平行四边形补全，验 3+1→Kabsch |
+| `--corners yolo` | YOLO Pose 推理（默认权重见 `QSFP_YOLO_WEIGHTS`） |
+| `--corners deeplsd` | 占位，未实现 |
+| `--infer-corner0` | 角 0 不可见时平行四边形补全；YOLO 下 peg P0 恒补、hole 仅 H0 不可见时补；GT 模式强制两端都补（仿真验 3+1） |
 
 ```bash
 # 默认 GT 四角

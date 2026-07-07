@@ -26,10 +26,18 @@ def make_keypoint_provider(
     hole_id: int,
     *,
     infer_corner0: bool = False,
+    gui: bool = False,
+    yolo_weights: str | None = None,
 ) -> Callable[[], list[ImageKeypoints] | None]:
     factory = _BACKENDS.get(mode)
     if factory is None:
         raise ValueError(f"unknown corners mode: {mode!r}")
     return factory(
-        cam, robot_id, peg, hole_id, infer_corner0=infer_corner0,
+        cam,
+        robot_id,
+        peg,
+        hole_id,
+        infer_corner0=infer_corner0,
+        gui=gui,
+        yolo_weights=yolo_weights,
     )

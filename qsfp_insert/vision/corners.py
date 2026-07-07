@@ -134,6 +134,18 @@ def apply_infer_corner0(
     return replace(kp, uv=uv, visible=visible, inferred=tuple(inferred))
 
 
+def apply_infer_corner0_if_missing(
+    kp: ImageKeypoints,
+    cam: FixedCamera,
+    half_x: float,
+    half_y: float,
+) -> ImageKeypoints:
+    """Infer corner 0 only when not already visible (occluded / not detected)."""
+    if kp.visible[0]:
+        return kp
+    return apply_infer_corner0(kp, cam, half_x, half_y)
+
+
 def marker_world_point(
     cam: FixedCamera,
     kp: ImageKeypoints,

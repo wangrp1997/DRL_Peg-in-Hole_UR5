@@ -13,6 +13,7 @@ def make_gt_provider(
     hole_id: int,
     *,
     infer_corner0: bool = False,
+    **_,
 ) -> Callable[[], list[ImageKeypoints] | None]:
     def provider() -> list[ImageKeypoints] | None:
         return gt_image_keypoints(

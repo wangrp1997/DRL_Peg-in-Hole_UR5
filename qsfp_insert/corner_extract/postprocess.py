@@ -12,5 +12,6 @@ __all__ = [
     "ImageKeypoints",
     "ProjectorCam",
     "apply_infer_corner0",
+    "apply_infer_corner0_if_missing",
     "infer_corner0_uv",
 ]

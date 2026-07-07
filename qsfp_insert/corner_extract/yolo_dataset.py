@@ -8,8 +8,9 @@ import shutil
 
 def write_data_yaml(out_dir: str) -> None:
     yaml_path = os.path.join(out_dir, "data.yaml")
-    content = """# YOLO pose — hole/peg 4 corners (sim wrist2)
-path: .
+    root = os.path.abspath(out_dir)
+    content = f"""# YOLO pose — hole/peg 4 corners (sim wrist2)
+path: {root}
 train: images/train
 val: images/val
 
