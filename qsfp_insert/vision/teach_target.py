@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 
 import numpy as np
 import pybullet as p
@@ -16,6 +15,7 @@ DEFAULT_DVS_TARGET_DIR = os.path.join(
     "teach",
     "dvs_targets",
 )
+DVS_TARGET_STEM = "dvs_target"
 
 
 def capture_dvs_target_gray(
@@ -27,7 +27,7 @@ def capture_dvs_target_gray(
     """Grab gray I* from wrist_camera2 after alignment (HARDWARE + cache if gui)."""
     for _ in range(settle_steps):
         p.stepSimulation()
-    return render_grayscale(cam, gui=gui, warmup=2)
+    return capture_teach_gray(cam, gui=gui, warmup=2)
 
 
 def save_dvs_target_image(
@@ -52,10 +52,8 @@ def save_dvs_target_image(
     if owned:
         cam.detach()
 
-    tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    stem = f"target_{tag}"
-    png_path = os.path.join(out_dir, f"{stem}.png")
-    json_path = os.path.join(out_dir, f"{stem}.json")
+    png_path = os.path.join(out_dir, f"{DVS_TARGET_STEM}.png")
+    json_path = os.path.join(out_dir, f"{DVS_TARGET_STEM}.json")
 
     save_teach_gray_png(gray, png_path)
     meta = {

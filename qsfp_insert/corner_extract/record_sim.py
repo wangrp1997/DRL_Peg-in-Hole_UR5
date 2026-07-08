@@ -16,8 +16,6 @@ import pybullet as p
 
 from corner_extract._paths import DEFAULT_RAW_DIR, ROOT  # noqa: F401
 from constants import (
-    ALIGN_ANG_TOL,
-    ALIGN_XY_TOL,
     ALIGN_Z_STANDOFF_MIN,
     HOLE_X_RANGE,
     HOLE_Y_RANGE,
@@ -25,6 +23,7 @@ from constants import (
     SETTLE_IK_STEPS_GUI,
 )
 from geometry import peg_tip_world
+from sim.cartesian_align_policy import cartesian_align_target
 from sim.perturbation import (
     apply_tip_perturbation,
     format_perturbation_log,
@@ -53,47 +52,8 @@ def sample_target_standoff_z(rng: random.Random) -> float:
 
 @contextmanager
 def _record_align_policy(target_z: float, *, z_band_m: float = TARGET_Z_BAND_M):
-    """Servo drives to target_z; convergence requires |standoff − target_z| ≤ band."""
-    import constants
-    from sim import cartesian_control
-    import vision.corner_servo as corner_servo_mod
-    import geometry as geometry_mod
-
-    orig_check = geometry_mod._check_aligned
-    orig_c = constants.ALIGN_Z_NOMINAL
-    orig_cc = cartesian_control.ALIGN_Z_NOMINAL
-    orig_cs = corner_servo_mod.ALIGN_Z_NOMINAL
-    orig_zmax_c = constants.ALIGN_Z_STANDOFF_MAX
-    orig_zmax_cs = corner_servo_mod.ALIGN_Z_STANDOFF_MAX
-
-    def _check(dx, dy, standoff, roll, pitch, yaw) -> bool:
-        xy_ok = abs(dx) <= ALIGN_XY_TOL and abs(dy) <= ALIGN_XY_TOL
-        z_ok = abs(standoff - target_z) <= z_band_m
-        rpy_ok = (
-            abs(roll) <= ALIGN_ANG_TOL
-            and abs(pitch) <= ALIGN_ANG_TOL
-            and abs(yaw) <= ALIGN_ANG_TOL
-        )
-        return xy_ok and z_ok and rpy_ok
-
-    # Switch to fine Z control when within ~6 mm of mouth.
-    fine_z_max = target_z + 0.003
-
-    geometry_mod._check_aligned = _check
-    constants.ALIGN_Z_NOMINAL = target_z
-    cartesian_control.ALIGN_Z_NOMINAL = target_z
-    corner_servo_mod.ALIGN_Z_NOMINAL = target_z
-    constants.ALIGN_Z_STANDOFF_MAX = fine_z_max
-    corner_servo_mod.ALIGN_Z_STANDOFF_MAX = fine_z_max
-    try:
+    with cartesian_align_target(target_z, z_band_m=z_band_m):
         yield
-    finally:
-        geometry_mod._check_aligned = orig_check
-        constants.ALIGN_Z_NOMINAL = orig_c
-        cartesian_control.ALIGN_Z_NOMINAL = orig_cc
-        corner_servo_mod.ALIGN_Z_NOMINAL = orig_cs
-        constants.ALIGN_Z_STANDOFF_MAX = orig_zmax_c
-        corner_servo_mod.ALIGN_Z_STANDOFF_MAX = orig_zmax_cs
 
 
 @dataclass

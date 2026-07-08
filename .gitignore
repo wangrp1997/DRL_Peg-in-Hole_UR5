@@ -23,6 +23,8 @@ qsfp_insert/visp_flow/teach/*
 qsfp_insert/template_flow/teach/*
 !qsfp_insert/template_flow/teach/.gitkeep
 qsfp_insert/corner_extract/datasets/*
+qsfp_insert/il_flow/dataset/*
+!qsfp_insert/il_flow/dataset/.gitkeep
 qsfp_insert/visp_flow/native/build/
 third_party/
 # IDE / OS

@@ -10,7 +10,6 @@ from constants import (
     ALIGN_ANG_TOL,
     ALIGN_XY_TOL,
     ALIGN_Z_STANDOFF_MAX,
-    ALIGN_Z_STANDOFF_MIN,
     HOLE_DEPTH,
     PEG_L,
     PLATE_TOP_Z,
@@ -75,9 +74,16 @@ def alignment_metrics(
 
 def _check_aligned(dx, dy, standoff, roll, pitch, yaw) -> bool:
     xy_ok = abs(dx) <= ALIGN_XY_TOL and abs(dy) <= ALIGN_XY_TOL
-    z_ok = ALIGN_Z_STANDOFF_MIN <= standoff <= ALIGN_Z_STANDOFF_MAX
+    z_ok = standoff <= ALIGN_Z_STANDOFF_MAX
     rpy_ok = abs(roll) <= ALIGN_ANG_TOL and abs(pitch) <= ALIGN_ANG_TOL and abs(yaw) <= ALIGN_ANG_TOL
     return xy_ok and z_ok and rpy_ok
+
+
+def is_xy_rpy_aligned(dx: float, dy: float, roll: float, pitch: float, yaw: float) -> bool:
+    """GT 6D without standoff — for low/near-zero teach heights."""
+    xy_ok = abs(dx) <= ALIGN_XY_TOL and abs(dy) <= ALIGN_XY_TOL
+    rpy_ok = abs(roll) <= ALIGN_ANG_TOL and abs(pitch) <= ALIGN_ANG_TOL and abs(yaw) <= ALIGN_ANG_TOL
+    return xy_ok and rpy_ok
 
 
 def is_aligned(

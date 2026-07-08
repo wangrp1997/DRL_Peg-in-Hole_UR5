@@ -6,7 +6,8 @@ QSFP-DD 方孔 + 矩形轴，PyBullet 物理验证（独立于 `rlenv.py`）。
 
 ```bash
 python qsfp_insert/demo/servo_align.py --gui
-python qsfp_insert/demo/servo_align.py --gui --wrist_cam2 [--opencv_render] [--insert] [--save_target]
+# 采集腕部相机的示教图像
+python qsfp_insert/demo/servo_align.py --gui --wrist_cam2 [--opencv_render] [--insert] [--save_target] [--standoff-mm]
 python qsfp_insert/demo/corner_servo_align.py --gui --seed 42 [--align-method kabsch|ibvs]
 python qsfp_insert/demo/corner_servo_eval.py --episodes 10 --seed 42 [--align-method kabsch|ibvs]
 ```

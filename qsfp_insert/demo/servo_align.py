@@ -15,13 +15,11 @@ from constants import (
     EE_LINEAR_STEP,
     HOLE_DEPTH,
     PLATE_TOP_Z,
-    SERVO_GUI_SUBSTEPS,
-    SERVO_MAX_STEPS,
-    SERVO_STALL_STEPS,
     UR5_MIN_INSERT_DEPTH,
 )
-from geometry import alignment_metrics, is_aligned, is_inserted, peg_tip_world
-from sim.cartesian_control import alignment_twist, apply_cartesian_velocity, stop_arm
+from geometry import alignment_metrics, is_inserted, is_xy_rpy_aligned, peg_tip_world
+from sim.cartesian_align import run_cartesian_align
+from sim.cartesian_align_policy import cartesian_align_target
 from sim.scene import (
     add_gui_camera_args,
     close_camera_windows,
@@ -35,6 +33,9 @@ from sim.scene import (
     validate_gui_camera_args,
 )
 from sim.wrist_camera2 import WristCamera2, attach_wrist_camera2
+
+DEFAULT_STANDOFF_MM = 4.0
+STANDOFF_Z_BAND_M = 0.001
 
 
 def _insert_phase(robot_id, arm, eef, peg, hole_xy, gui: bool) -> bool:
@@ -78,6 +79,7 @@ def servo_align_episode(
     fixed_cam: bool = False,
     save_target: bool = False,
     save_target_dir: str | None = None,
+    standoff_mm: float = DEFAULT_STANDOFF_MM,
 ) -> tuple[bool, bool | None, dict, tuple[float, float], tuple[str, str] | None, WristCamera2 | None]:
     connect(gui)
     robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(
@@ -89,40 +91,34 @@ def servo_align_episode(
 
     cam2 = _setup_wrist_camera2(robot_id, eef, hole_xy, gui, opencv_render, wrist_cam2)
 
-    stall = 0
-    prev_standoff = float("inf")
-    aligned = False
-    for _ in range(SERVO_MAX_STEPS):
-        tip = peg_tip_world(robot_id, peg)
-        peg_orn = p.getLinkState(robot_id, peg)[1]
-        if is_aligned(tip, peg_orn, hole_xy, hole_orn):
-            aligned = True
-            break
-        m = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
-        if abs(m["standoff"] - prev_standoff) < 5e-6:
-            stall += 1
-            if stall >= SERVO_STALL_STEPS:
-                break
-        else:
-            stall = 0
-        prev_standoff = m["standoff"]
-        twist = alignment_twist(m["dx"], m["dy"], m["standoff"], m["roll"], m["pitch"], m["yaw"])
-        apply_cartesian_velocity(robot_id, peg, arm, twist)
-        substeps = SERVO_GUI_SUBSTEPS if gui else 1
-        for _ in range(substeps):
-            p.stepSimulation()
-        if gui:
-            refresh_camera_views()
-            time.sleep(1.0 / 240.0)
+    target_z = standoff_mm * 1e-3
 
-    stop_arm(robot_id, arm)
-    for _ in range(20):
-        p.stepSimulation()
+    def on_gui_step() -> None:
+        refresh_camera_views()
+        time.sleep(1.0 / 240.0)
+
+    with cartesian_align_target(target_z, z_band_m=STANDOFF_Z_BAND_M):
+        aligned, m = run_cartesian_align(
+            robot_id,
+            arm,
+            peg,
+            hole_xy,
+            hole_orn,
+            gui=gui,
+            on_step=on_gui_step if gui else None,
+        )
 
     tip = peg_tip_world(robot_id, peg)
     peg_orn = p.getLinkState(robot_id, peg)[1]
-    m = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
-    aligned = is_aligned(tip, peg_orn, hole_xy, hole_orn)
+    gt = alignment_metrics(tip, peg_orn, hole_xy, hole_orn)
+    m = dict(m)
+    m["gt_aligned"] = is_xy_rpy_aligned(gt["dx"], gt["dy"], gt["roll"], gt["pitch"], gt["yaw"])
+    m["gt_dx"] = gt["dx"]
+    m["gt_dy"] = gt["dy"]
+    m["gt_standoff"] = gt["standoff"]
+    m["gt_roll"] = gt["roll"]
+    m["gt_pitch"] = gt["pitch"]
+    m["gt_yaw"] = gt["yaw"]
 
     inserted: bool | None = None
     if insert:
@@ -132,6 +128,8 @@ def servo_align_episode(
     if save_target and aligned:
         from vision.teach_target import save_dvs_target_image
 
+        m = dict(m)
+        m["target_standoff_mm"] = standoff_mm
         saved = save_dvs_target_image(
             robot_id, eef, hole_xy, m, out_dir=save_target_dir, cam=cam2, gui=gui
         )
@@ -148,6 +146,7 @@ def run(
     fixed_cam: bool,
     save_target: bool,
     save_target_dir: str | None,
+    standoff_mm: float,
 ) -> bool:
     aligned, inserted, m, _, saved, cam2 = servo_align_episode(
         gui=gui,
@@ -159,11 +158,18 @@ def run(
         fixed_cam=fixed_cam,
         save_target=save_target,
         save_target_dir=save_target_dir,
+        standoff_mm=standoff_mm,
     )
     print(
-        f"dx={m['dx']*1e3:+.2f}mm dy={m['dy']*1e3:+.2f}mm "
-        f"standoff={m['standoff']*1e3:.2f}mm "
+        f"pose   dx={m['dx']*1e3:+.2f}mm dy={m['dy']*1e3:+.2f}mm "
+        f"standoff={m['standoff']*1e3:.2f}mm (target {standoff_mm:.1f}mm) "
         f"rpy=({math.degrees(m['roll']):+.2f}°, {math.degrees(m['pitch']):+.2f}°, {math.degrees(m['yaw']):+.2f}°)"
+    )
+    print(
+        f"GT     dx={m['gt_dx']*1e3:+.2f}mm dy={m['gt_dy']*1e3:+.2f}mm "
+        f"standoff={m['gt_standoff']*1e3:.2f}mm "
+        f"rpy=({math.degrees(m['gt_roll']):+.2f}°, {math.degrees(m['gt_pitch']):+.2f}°, {math.degrees(m['gt_yaw']):+.2f}°) "
+        f"gt_aligned={m['gt_aligned']}"
     )
     print("align ok" if aligned else "align fail")
     if saved is not None:
@@ -193,13 +199,20 @@ if __name__ == "__main__":
     ap.add_argument(
         "--save_target",
         action="store_true",
-        help="After align ok: wrist_camera2 gray PNG + JSON → teach/dvs_targets/",
+        help="After align ok: teach/dvs_targets/dvs_target.png + .json",
     )
     ap.add_argument(
         "--save_target_dir",
         default=None,
         metavar="DIR",
         help="Override output dir for --save_target (default: qsfp_insert/teach/dvs_targets)",
+    )
+    ap.add_argument(
+        "--standoff-mm",
+        type=float,
+        default=DEFAULT_STANDOFF_MM,
+        metavar="MM",
+        help=f"Target tip standoff above hole mouth in mm (default: {DEFAULT_STANDOFF_MM})",
     )
     args = ap.parse_args()
     validate_gui_camera_args(ap, args)
@@ -214,6 +227,7 @@ if __name__ == "__main__":
             args.fixed_cam,
             args.save_target,
             args.save_target_dir,
+            args.standoff_mm,
         )
         else 1
     )
