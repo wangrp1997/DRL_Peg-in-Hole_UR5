@@ -65,3 +65,31 @@ dataset/raw/
 批量采集时 **PyBullet 只连接一次**，episode 之间用 `resetSimulation` 换场景（同 `collect_sim.py`），避免每条都 disconnect/reconnect 导致 GUI 跑飞、机械臂变线。
 
 `--headless` 保留仅供调试；正式 dataset 请去掉该 flag。
+
+## 转 LeRobot
+
+需 **Python ≥3.12** 的 LeRobot 环境（如 `conda activate lerobot312`，`pip install -e ".[dataset]"`）。
+
+全量 100 条：
+
+```bash
+python qsfp_insert/il_flow/convert_to_lerobot.py \
+  --raw-dir qsfp_insert/il_flow/dataset/raw \
+  --out-root qsfp_insert/il_flow/dataset/lerobot \
+  --repo-id local/qsfp_il --overwrite
+```
+
+转换后 **`images/` 为空是正常的**（临时帧已编码进 `videos/*.mp4`）；训练读 `videos/` + `data/` 即可。
+
+## 训练（LeRobot Diffusion）
+
+```bash
+conda activate lerobot312   # pip install -e ".[training]" 若缺训练依赖
+lerobot-train \
+  --dataset.repo_id=local/qsfp_il \
+  --dataset.root=dataset/lerobot \
+  --policy.type=diffusion \
+  --policy.push_to_hub=false
+```
+
+默认 checkpoint 写在**当前目录** `outputs/train/日期/时间_diffusion/`；可 `--output_dir=qsfp_insert/il_flow/outputs/train` 指定到项目内。
