@@ -85,11 +85,17 @@ python qsfp_insert/il_flow/convert_to_lerobot.py \
 
 ```bash
 conda activate lerobot312   # pip install -e ".[training]" 若缺训练依赖
-lerobot-train \
+# 服务器训练完整指令
+CUDA_VISIBLE_DEVICES=0 lerobot-train \
   --dataset.repo_id=local/qsfp_il \
-  --dataset.root=dataset/lerobot \
+  --dataset.root=/mnt/ssd/datasets/qsfp_il/lerobot \
   --policy.type=diffusion \
-  --policy.push_to_hub=false
+  --policy.push_to_hub=true \
+  --policy.repo_id=rpwang/qsfp_il_dp \
+  --wandb.enable=true \
+  --wandb.project=qsfp_il \
+  --batch_size=32 \
+  --output_dir=/mnt/ssd/checkpoints/qsfp_il_ckpt/diffusion
 ```
 
 默认 checkpoint 写在**当前目录** `outputs/train/日期/时间_diffusion/`；可 `--output_dir=qsfp_insert/il_flow/outputs/train` 指定到项目内。
