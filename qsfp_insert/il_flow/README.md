@@ -99,3 +99,18 @@ CUDA_VISIBLE_DEVICES=0 lerobot-train \
 ```
 
 默认 checkpoint 写在**当前目录** `outputs/train/日期/时间_diffusion/`；可 `--output_dir=qsfp_insert/il_flow/outputs/train` 指定到项目内。
+
+## 评测（Diffusion rollout）
+
+`--model` 填 Hugging Face repo id 时，**首次运行会自动下载**到 `~/.cache/huggingface/hub/`，之后用本地缓存。
+
+```bash
+conda activate lerobot312   # pip install pybullet opencv-python 若缺仿真依赖
+cd ~/Documents/DRL_Peg-in-Hole_UR5
+python qsfp_insert/il_flow/run_eval.py \
+  --model rpwang/qsfp_il_dp \
+  --episodes 10 --seed 42
+# 无 GUI：加 --headless
+```
+
+Goal 图用仿真 GT 对齐后渲染（oracle，与训练数据里每条 episode 的 `goal_rgb.png` 语义一致）。
