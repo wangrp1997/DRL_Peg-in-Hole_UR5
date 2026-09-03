@@ -40,6 +40,7 @@ from sim.cartesian_align import run_cartesian_align
 from sim.cartesian_align_policy import cartesian_align_target
 from sim.cartesian_control import apply_cartesian_velocity, stop_arm
 from sim.perturbation import apply_tip_perturbation, format_perturbation_log, sample_collect_perturbation6
+from sim.gui_preview import wait_enter_to_start
 from sim.scene import move_tip_to_standoff, settle
 from visp_flow.visp_constants import COARSE_STANDOFF
 
@@ -127,6 +128,7 @@ def rollout_episode(
     max_steps: int,
     gui: bool,
     target_standoff_mm: float | None,
+    wait_enter: bool = False,
 ) -> dict:
     rng = random.Random(seed)
     hole_xy = sample_hole_xy(rng)
@@ -173,6 +175,9 @@ def rollout_episode(
             "reason": "oracle_goal_align_failed",
             "steps": 0,
         }
+
+    if wait_enter and gui:
+        wait_enter_to_start("PyBullet 已打开（扰动后待机）。请开始录屏，然后按 Enter 启动 Diffusion 策略…")
 
     policy.reset()
     success = False
@@ -266,6 +271,7 @@ def run_eval(
     gui: bool,
     device: str | None,
     standoff_mm: float | None,
+    wait_enter: bool = False,
 ) -> dict:
     if device is None:
         device_t = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -293,6 +299,7 @@ def run_eval(
                 max_steps=max_steps,
                 gui=gui,
                 target_standoff_mm=standoff_mm,
+                wait_enter=wait_enter and ep == 1,
             )
             rows.append(row)
             ok += int(row["success"])
@@ -342,8 +349,15 @@ def main() -> int:
     ap.add_argument("--standoff-mm", type=float, default=None, help="fixed target standoff; default random")
     ap.add_argument("--device", default=None, help="cuda / cpu (default: auto)")
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument(
+        "--wait-enter",
+        action="store_true",
+        help="After scene opens (ep 1), wait for Enter before policy rollout (for recording)",
+    )
     ap.add_argument("--output-dir", default=DEFAULT_OUT)
     args = ap.parse_args()
+    if args.wait_enter and args.headless:
+        ap.error("--wait-enter requires GUI (omit --headless)")
 
     try:
         summary = run_eval(
@@ -356,6 +370,7 @@ def main() -> int:
             gui=not args.headless,
             device=args.device,
             standoff_mm=args.standoff_mm,
+            wait_enter=args.wait_enter,
         )
     except ImportError as exc:
         print(

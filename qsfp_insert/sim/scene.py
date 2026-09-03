@@ -178,11 +178,14 @@ def run_insert_after_align(
     peg: int,
     hole_xy: tuple[float, float],
     gui: bool = False,
+    on_step=None,
 ) -> bool:
     """Descend along −Z after alignment until inserted or depth limit."""
     ee_orn0 = p.getLinkState(robot_id, eef)[1]
-    for _ in range(800):
+    for step in range(800):
         step_tip_z(robot_id, eef, arm, peg, hole_xy, ee_orn0, -EE_LINEAR_STEP, gui)
+        if on_step is not None and step % 3 == 0:
+            on_step()
         tip = peg_tip_world(robot_id, peg)
         if is_inserted(tip, hole_xy, min_insert_depth=UR5_MIN_INSERT_DEPTH):
             return True

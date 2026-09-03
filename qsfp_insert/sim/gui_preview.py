@@ -31,6 +31,16 @@ def is_pybullet_connected() -> bool:
         return False
 
 
+def wait_enter_to_start(message: str | None = None) -> None:
+    """Block until Enter — use before episode start so screen recording can begin."""
+    prompt = message or "场景已就绪。请开始录屏，然后按 Enter 启动…"
+    print(prompt)
+    try:
+        input()
+    except EOFError:
+        pass
+
+
 def rgba_to_gray(rgba: np.ndarray) -> np.ndarray:
     rgb = np.ascontiguousarray(rgba[..., :3])
     if rgb.dtype != np.uint8:

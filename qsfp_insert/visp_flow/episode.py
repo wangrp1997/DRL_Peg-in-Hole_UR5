@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Callable
 from typing import Any, Literal
 
 import pybullet as p
@@ -16,7 +17,7 @@ from sim.perturbation import (
     format_perturbation_log,
     sample_perturbation6,
 )
-from sim.gui_preview import is_pybullet_connected, pause_gui
+from sim.gui_preview import is_pybullet_connected, pause_gui, wait_enter_to_start
 from sim.scene import (
     close_camera_windows,
     connect,
@@ -79,8 +80,16 @@ def visp_flow_episode(
     infer_corner0: bool = False,
     lock_hole_corners: bool = False,
     skip_hole_h0: bool = False,
+    on_frame: Callable[[], None] | None = None,
+    on_phase: Callable[[str], None] | None = None,
+    on_setup: Callable[[Any, Callable[[], Any]], None] | None = None,
+    wait_enter: bool = False,
 ) -> tuple[bool, dict[str, Any], tuple[float, float], tuple | None]:
     require_visp_python()
+
+    def _phase(name: str) -> None:
+        if on_phase is not None:
+            on_phase(name)
 
     connect(gui)
     robot_id, arm, eef, peg, hole_id, hole_xy = load_scene(
@@ -113,15 +122,33 @@ def visp_flow_episode(
         if gui and is_pybullet_connected():
             refresh_camera_views(None, render=False)
 
+    if on_setup is not None:
+        on_setup(wrist_cam, _provider)
+
+    def _step_corners() -> None:
+        _on_frame_corners()
+        if on_frame is not None:
+            on_frame()
+
+    def _step_cam_only() -> None:
+        _on_frame_cam_only()
+        if on_frame is not None:
+            on_frame()
+
     # A) IK standoff（episode 初始位）
+    _phase("standoff")
     move_tip_to_standoff(
         robot_id, eef, arm, peg, hole_xy, COARSE_STANDOFF, gui=gui, settle_steps=settle_gui
     )
-    _on_frame_corners()
+    _step_corners()
+
+    if wait_enter:
+        wait_enter_to_start("PyBullet / OpenCV 已打开（standoff 待机）。请开始录屏，然后按 Enter 启动 ViSP 流程…")
 
     # B) 仅去对准位采 I*（不启动伺服流程）
+    _phase("teach")
     teach_ok, m_align = run_cartesian_align(
-        robot_id, arm, peg, hole_xy, hole_orn, gui=gui, on_step=_on_frame_corners if gui else None
+        robot_id, arm, peg, hole_xy, hole_orn, gui=gui, on_step=_step_corners
     )
     print(f"teach visit (cartesian align): ok={teach_ok}")
 
@@ -141,6 +168,7 @@ def visp_flow_episode(
                 ibvs_desired, dvs_target, hole_xy, m_align, dvs_plane_z=dvs_plane_z, out_dir=teach_dir
             )
             print(f"visp teach saved: {teach_path}")
+            _phase("teach_capture")
         else:
             print("teach skipped: IBVS corner assignment failed")
     else:
@@ -150,15 +178,16 @@ def visp_flow_episode(
     move_tip_to_standoff(
         robot_id, eef, arm, peg, hole_xy, COARSE_STANDOFF, gui=gui, settle_steps=settle_gui
     )
-    _on_frame_corners()
+    _step_corners()
 
     if perturb is None and rng is not None:
         perturb = sample_perturbation6(rng)
     if perturb is not None:
+        _phase("perturb")
         apply_tip_perturbation(
             robot_id, eef, arm, peg, hole_xy, hole_orn, perturb, gui=gui, settle_steps=settle_gui
         )
-        _on_frame_corners()
+        _step_corners()
         print(format_perturbation_log(perturb))
 
     if lock_hole_corners:
@@ -175,10 +204,11 @@ def visp_flow_episode(
         )
 
     # D) 第一阶段：粗对准（角点可视化 ON）
+    _phase("coarse")
     pause_gui(
         PHASE_PAUSE_S,
         f"准备开始第一阶段伺服（粗对准 / {coarse_method}）…",
-        _on_frame_corners if gui else None,
+        _step_corners,
     )
 
     coarse_ok = False
@@ -195,7 +225,7 @@ def visp_flow_episode(
                 hole_orn,
                 _provider,
                 gui=gui,
-                on_step=_on_frame_corners if gui else None,
+                on_step=_step_corners,
             )
             standoff = peg_tip_world(robot_id, peg)[2] - PLATE_TOP_Z
             kps_pre = _provider()
@@ -220,7 +250,7 @@ def visp_flow_episode(
                     hole_xy,
                     hole_orn,
                     gui=gui,
-                    on_step=_on_frame_corners if gui else None,
+                    on_step=_step_corners,
                 )
             elif pre_gt:
                 print(f"IBVS preflight: PnP 在 px>{pre_px:.1f} 时 GT 已收敛，仍跑纯 IBVS")
@@ -235,7 +265,7 @@ def visp_flow_episode(
                     hole_xy,
                     hole_orn,
                     gui=gui,
-                    on_step=_on_frame_corners if gui else None,
+                    on_step=_step_corners,
                 )
             else:
                 print(f"IBVS preflight: 未进入启动包络 (px≈{pre_px:.1f})，仍尝试纯 IBVS")
@@ -250,7 +280,7 @@ def visp_flow_episode(
                     hole_xy,
                     hole_orn,
                     gui=gui,
-                    on_step=_on_frame_corners if gui else None,
+                    on_step=_step_corners,
                 )
         else:
             coarse_ok, coarse_metrics = run_kabsch_coarse(
@@ -262,7 +292,7 @@ def visp_flow_episode(
                 hole_orn,
                 _provider,
                 gui=gui,
-                on_step=_on_frame_corners if gui else None,
+                on_step=_step_corners,
             )
     gt_after_coarse = _gt_metrics(robot_id, peg, hole_xy, hole_orn)
     gt_coarse_ok = metrics_converged(gt_after_coarse)
@@ -276,19 +306,21 @@ def visp_flow_episode(
     # Skip DVS only when GT already converged after coarse (not merely visual coarse_ok).
     dvs_skipped = (not always_run_dvs) and gt_coarse_ok
     if dvs_skipped:
+        _phase("dvs_skip")
         print(
             f"第二阶段跳过: GT 已对准"
             f"（视觉粗对准={'ok' if coarse_ok else 'fail'}）"
         )
         if gui and gui_idle and not insert:
-            pause_gui(20.0, "粗对准完成（GT ok，跳过 DVS），查看终态…", _on_frame_corners)
+            pause_gui(20.0, "粗对准完成（GT ok，跳过 DVS），查看终态…", _step_corners)
     elif dvs_target is not None:
+        _phase("dvs")
         if coarse_ok and not gt_coarse_ok:
             print("第二阶段启动: 视觉已收敛但 GT 未对准，进入 ViSP DVS 细调")
         pause_gui(
             PHASE_PAUSE_S,
             "准备开始第二阶段伺服（ViSP 光度 DVS）…",
-            _on_frame_cam_only if gui else None,
+            _step_cam_only,
         )
         dvs_ok, dvs_err, dvs_gated = run_visp_dvs_fine(
             robot_id,
@@ -299,7 +331,7 @@ def visp_flow_episode(
             dvs_target,
             plane_z=dvs_plane_z,
             gui=gui,
-            on_step=_on_frame_cam_only if gui else None,
+            on_step=_step_cam_only,
             start_err=dvs_start_err,
             abort_err=dvs_abort_err,
         )
@@ -316,12 +348,16 @@ def visp_flow_episode(
 
     inserted: bool | None = None
     if insert and coarse_ok:
-        inserted = run_insert_after_align(robot_id, arm, eef, peg, hole_xy, gui=gui)
+        _phase("insert")
+        inserted = run_insert_after_align(
+            robot_id, arm, eef, peg, hole_xy, gui=gui, on_step=_step_corners
+        )
         print(f"插入: {'ok' if inserted else 'fail'}")
-        if gui:
-            _on_frame_corners()
+        _step_corners()
         if gui and gui_idle:
-            pause_gui(20.0, "插入完成，查看终态…", _on_frame_corners)
+            pause_gui(20.0, "插入完成，查看终态…", _step_corners)
+
+    _phase("done")
 
     tip = peg_tip_world(robot_id, peg)
     peg_orn = p.getLinkState(robot_id, peg)[1]

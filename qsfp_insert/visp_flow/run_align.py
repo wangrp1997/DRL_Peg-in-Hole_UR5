@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
+
+_QSFP_INSERT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_QSFP_INSERT)
+for _p in (_QSFP_INSERT, _REPO_ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from visp_flow._paths import ROOT  # noqa: F401
 from visp_flow.episode import visp_flow_episode
@@ -43,7 +50,14 @@ def main() -> int:
         action="store_true",
         help="With --lock-hole-corners: lock from H1–H3 + parallelogram H0 (ignore YOLO H0)",
     )
+    ap.add_argument(
+        "--wait-enter",
+        action="store_true",
+        help="After GUI/scene opens, wait for Enter before starting (for screen recording)",
+    )
     args = ap.parse_args()
+    if args.wait_enter and not args.gui:
+        ap.error("--wait-enter requires --gui")
 
     aligned, report, hole_xy, live = visp_flow_episode(
         gui=args.gui,
@@ -56,6 +70,7 @@ def main() -> int:
         infer_corner0=args.infer_corner0,
         lock_hole_corners=args.lock_hole_corners,
         skip_hole_h0=args.skip_hole_h0,
+        wait_enter=args.wait_enter,
     )
     if args.insert:
         ok = bool(report.get("coarse_ok") and report.get("inserted"))
